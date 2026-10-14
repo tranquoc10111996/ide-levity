@@ -1,0 +1,4 @@
+module ide_ffiFFI {
+    header "ide_ffiFFI.h"
+    export *
+}

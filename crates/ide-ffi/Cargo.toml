@@ -1,0 +1,18 @@
+[package]
+name = "ide-ffi"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "staticlib", "lib"]
+name = "ide_ffi"
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
+
+[dependencies]
+ide-core = { path = "../ide-core" }
+parking_lot = "0.12"
+thiserror = "2"
+uniffi = { version = "0.28", features = ["cli"] }

@@ -1,0 +1,7 @@
+/target/
+platforms/android/.gradle/
+platforms/android/build/
+platforms/android/app/build/
+platforms/ios/.build/
+platforms/ios/Frameworks/
+*.DS_Store

@@ -1,0 +1,11 @@
+[package]
+name = "ide-agent"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ide-buffer = { path = "../ide-buffer" }
+parking_lot = "0.12"
+serde = { version = "1", features = ["derive"] }
+tokio = { version = "1", features = ["full"] }
+thiserror = "2"

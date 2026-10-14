@@ -1,0 +1,17 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/ide-buffer",
+    "crates/ide-syntax",
+    "crates/ide-lsp",
+    "crates/ide-git",
+    "crates/ide-agent",
+    "crates/ide-core",
+    "crates/ide-ffi",
+    "crates/ide-desktop",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
