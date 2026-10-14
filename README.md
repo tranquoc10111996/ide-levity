@@ -76,9 +76,25 @@ IDE Levity automatically detects AI credentials in the following priority order:
 
 ---
 
-## Building & Running
+## Installation & Running
 
-### 1. Rust Workspace & Desktop Application (Linux, macOS, Windows)
+### 1. One-Command Desktop Installation (Linux & macOS)
+
+```bash
+# Install `levity` & `ide-desktop` into /usr/local/bin (or ~/.local/bin) + desktop menu entry
+./install.sh
+
+# Open current project folder (just like `code .` in VS Code)
+levity .
+
+# Open a specific file directly
+levity crates/ide-core/src/lib.rs
+
+# Run interactive TrueColor terminal editor over SSH / headless
+levity -i .
+```
+
+### 2. Rust Workspace Verification & Manual Build (Linux, macOS, Windows)
 
 ```bash
 # Run all unit and integration tests across all 10 workspace crates
