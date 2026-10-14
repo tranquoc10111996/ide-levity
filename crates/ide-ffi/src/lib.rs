@@ -31,6 +31,8 @@ pub enum CursorDirection {
     LineEnd,
     DocumentStart,
     DocumentEnd,
+    WordLeft,
+    WordRight,
 }
 
 impl From<CursorDirection> for core::CursorDirection {
@@ -44,6 +46,8 @@ impl From<CursorDirection> for core::CursorDirection {
             CursorDirection::LineEnd => Self::LineEnd,
             CursorDirection::DocumentStart => Self::DocumentStart,
             CursorDirection::DocumentEnd => Self::DocumentEnd,
+            CursorDirection::WordLeft => Self::WordLeft,
+            CursorDirection::WordRight => Self::WordRight,
         }
     }
 }
@@ -95,6 +99,41 @@ pub enum EditorAction {
     SubmitAgentPrompt {
         prompt: String,
     },
+    InsertNewline {
+        buffer_id: u64,
+    },
+    Indent {
+        buffer_id: u64,
+    },
+    Outdent {
+        buffer_id: u64,
+    },
+    ToggleLineComment {
+        buffer_id: u64,
+    },
+    SelectAll {
+        buffer_id: u64,
+    },
+    AddNextOccurrence {
+        buffer_id: u64,
+    },
+    DeleteWordBackward {
+        buffer_id: u64,
+    },
+    DeleteWordForward {
+        buffer_id: u64,
+    },
+    DeleteSelectionOrLine {
+        buffer_id: u64,
+    },
+    MovePage {
+        buffer_id: u64,
+        pages: i32,
+        select: bool,
+    },
+    CollapseCursors {
+        buffer_id: u64,
+    },
 }
 
 impl From<EditorAction> for core::EditorAction {
@@ -140,6 +179,29 @@ impl From<EditorAction> for core::EditorAction {
                 Self::TriggerLspCompletion { buffer_id }
             }
             EditorAction::SubmitAgentPrompt { prompt } => Self::SubmitAgentPrompt { prompt },
+            EditorAction::InsertNewline { buffer_id } => Self::InsertNewline { buffer_id },
+            EditorAction::Indent { buffer_id } => Self::Indent { buffer_id },
+            EditorAction::Outdent { buffer_id } => Self::Outdent { buffer_id },
+            EditorAction::ToggleLineComment { buffer_id } => Self::ToggleLineComment { buffer_id },
+            EditorAction::SelectAll { buffer_id } => Self::SelectAll { buffer_id },
+            EditorAction::AddNextOccurrence { buffer_id } => Self::AddNextOccurrence { buffer_id },
+            EditorAction::DeleteWordBackward { buffer_id } => {
+                Self::DeleteWordBackward { buffer_id }
+            }
+            EditorAction::DeleteWordForward { buffer_id } => Self::DeleteWordForward { buffer_id },
+            EditorAction::DeleteSelectionOrLine { buffer_id } => {
+                Self::DeleteSelectionOrLine { buffer_id }
+            }
+            EditorAction::MovePage {
+                buffer_id,
+                pages,
+                select,
+            } => Self::MovePage {
+                buffer_id,
+                pages,
+                select,
+            },
+            EditorAction::CollapseCursors { buffer_id } => Self::CollapseCursors { buffer_id },
         }
     }
 }
@@ -362,6 +424,55 @@ impl From<core::ViewportViewModel> for ViewportViewModel {
     }
 }
 
+/// Open editor tab information.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct OpenBufferInfo {
+    pub buffer_id: u64,
+    /// Absolute path, or `None` for untitled buffers.
+    pub path: Option<String>,
+    pub title: String,
+    pub is_dirty: bool,
+}
+
+impl From<core::OpenBufferInfo> for OpenBufferInfo {
+    fn from(b: core::OpenBufferInfo) -> Self {
+        Self {
+            buffer_id: b.buffer_id,
+            path: b.path.map(|p| p.to_string_lossy().into_owned()),
+            title: b.title,
+            is_dirty: b.is_dirty,
+        }
+    }
+}
+
+/// One explorer entry (a single directory level).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct DirEntryInfo {
+    pub name: String,
+    pub path: String,
+    pub is_dir: bool,
+    pub is_ignored: bool,
+}
+
+impl From<core::DirEntryInfo> for DirEntryInfo {
+    fn from(e: core::DirEntryInfo) -> Self {
+        Self {
+            name: e.name,
+            path: e.path.to_string_lossy().into_owned(),
+            is_dir: e.is_dir,
+            is_ignored: e.is_ignored,
+        }
+    }
+}
+
+/// Clipboard payload for Copy/Cut.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct ClipboardPayload {
+    pub text: String,
+    /// True when nothing was selected and the whole line(s) were copied.
+    pub is_whole_line: bool,
+}
+
 /// UniFFI Object wrapping `ide_core::IdeWorkspace` for thread-safe mobile/cross-platform calls.
 #[derive(uniffi::Object)]
 pub struct FfiWorkspace {
@@ -412,6 +523,85 @@ impl FfiWorkspace {
         let vm = self.inner.reject_agent_task(task_id, buffer_id)?;
         Ok(ViewportViewModel::from(vm))
     }
+
+    /// Absolute workspace root folder.
+    pub fn root_dir(&self) -> String {
+        self.inner.root_dir().to_string_lossy().into_owned()
+    }
+
+    /// Open tabs in order.
+    pub fn open_buffers(&self) -> Vec<OpenBufferInfo> {
+        self.inner
+            .open_buffer_infos()
+            .into_iter()
+            .map(OpenBufferInfo::from)
+            .collect()
+    }
+
+    pub fn set_active_buffer(&self, buffer_id: u64) -> Result<ViewportViewModel, FfiError> {
+        Ok(self.inner.set_active_buffer_id(buffer_id)?.into())
+    }
+
+    pub fn close_buffer(&self, buffer_id: u64) -> Result<ViewportViewModel, FfiError> {
+        Ok(self.inner.close_buffer(buffer_id)?.into())
+    }
+
+    pub fn new_untitled_buffer(&self) -> Result<ViewportViewModel, FfiError> {
+        self.inner.new_untitled_buffer()?;
+        Ok(self.inner.active_viewport()?.into())
+    }
+
+    pub fn save_buffer_as(&self, buffer_id: u64, path: String) -> Result<ViewportViewModel, FfiError> {
+        Ok(self.inner.save_buffer_as(buffer_id, path)?.into())
+    }
+
+    /// Text to copy (selection, or current line when nothing is selected).
+    pub fn clipboard_text(&self, buffer_id: u64) -> Result<ClipboardPayload, FfiError> {
+        let (text, is_whole_line) = self.inner.clipboard_text(buffer_id)?;
+        Ok(ClipboardPayload {
+            text,
+            is_whole_line,
+        })
+    }
+
+    /// Lists one directory level (folders first). Pass an empty string for the root.
+    pub fn list_directory(&self, dir: String) -> Result<Vec<DirEntryInfo>, FfiError> {
+        let target = if dir.is_empty() {
+            self.inner.root_dir()
+        } else {
+            std::path::PathBuf::from(dir)
+        };
+        Ok(self
+            .inner
+            .list_directory(target)?
+            .into_iter()
+            .map(DirEntryInfo::from)
+            .collect())
+    }
+
+    pub fn create_file(&self, path: String) -> Result<ViewportViewModel, FfiError> {
+        Ok(self.inner.create_file(path)?.into())
+    }
+
+    pub fn create_dir(&self, path: String) -> Result<String, FfiError> {
+        Ok(self.inner.create_dir(path)?.to_string_lossy().into_owned())
+    }
+
+    pub fn rename_path(&self, from: String, to: String) -> Result<String, FfiError> {
+        Ok(self
+            .inner
+            .rename_path(from, to)?
+            .to_string_lossy()
+            .into_owned())
+    }
+
+    pub fn delete_path(&self, path: String) -> Result<(), FfiError> {
+        Ok(self.inner.delete_path(path)?)
+    }
+
+    pub fn has_unsaved_changes(&self) -> bool {
+        self.inner.has_unsaved_changes()
+    }
 }
 
 #[cfg(test)]
@@ -433,5 +623,13 @@ mod tests {
             .unwrap();
         assert!(updated.is_dirty);
         assert!(updated.visible_lines[0].text.contains("FFI test"));
+        let tabs = ws.open_buffers();
+        assert_eq!(tabs.len(), 1);
+        assert_eq!(tabs[0].title, "Untitled-1");
+        assert!(tabs[0].is_dirty);
+        let clip = ws.clipboard_text(vm.buffer_id).unwrap();
+        assert!(clip.is_whole_line);
+        let root_listing = ws.list_directory(String::new()).unwrap();
+        assert!(root_listing.iter().any(|e| e.name == "src" && e.is_dir));
     }
 }

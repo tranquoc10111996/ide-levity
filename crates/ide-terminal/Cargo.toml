@@ -1,0 +1,19 @@
+[package]
+name = "ide-terminal"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "PTY-backed terminal sessions for IDE Levity powered by alacritty_terminal"
+
+[dependencies]
+alacritty_terminal = "0.24"
+parking_lot = "0.12"
+thiserror = "2"
+# alacritty_terminal 0.24 relies on rustix's `std` feature being enabled by feature
+# unification; enable it explicitly so this crate builds standalone.
+rustix = { version = "0.38", features = ["std"] }
+
+[target.'cfg(unix)'.dependencies]
+# Process-group signalling (SIGHUP/SIGKILL on shutdown) and `tcgetpgrp` for the
+# foreground job of the PTY. Merged with the `std` feature declared above.
+rustix = { version = "0.38", features = ["std", "process", "termios"] }

@@ -9,6 +9,9 @@ members = [
     "crates/ide-core",
     "crates/ide-ffi",
     "crates/ide-desktop",
+    "crates/ide-ai",
+    "crates/ide-terminal",
+    "crates/ide-search",
 ]
 
 [workspace.package]

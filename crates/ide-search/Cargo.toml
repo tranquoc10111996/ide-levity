@@ -1,0 +1,15 @@
+[package]
+name = "ide-search"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Gitignore-aware project-wide search and replace for IDE Levity"
+
+[dependencies]
+ignore = "0.4"
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+
+[dev-dependencies]
+tempfile = "3"

@@ -27,6 +27,31 @@ pub enum CursorDirection {
     LineEnd,
     DocumentStart,
     DocumentEnd,
+    /// Moves to the start of the previous word (Ctrl+Left / Alt+Left).
+    WordLeft,
+    /// Moves to the end of the next word (Ctrl+Right / Alt+Right).
+    WordRight,
+}
+
+/// Character class used for word-wise cursor movement and undo coalescing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CharClass {
+    Word,
+    Whitespace,
+    Newline,
+    Punctuation,
+}
+
+fn char_class(c: char) -> CharClass {
+    if c == '\n' || c == '\r' {
+        CharClass::Newline
+    } else if c.is_whitespace() {
+        CharClass::Whitespace
+    } else if c.is_alphanumeric() || c == '_' {
+        CharClass::Word
+    } else {
+        CharClass::Punctuation
+    }
 }
 
 /// 0-indexed row and 0-indexed byte column within the row, matching `tree_sitter::Point`.
@@ -118,7 +143,13 @@ pub struct TextBuffer {
     file_path: Option<PathBuf>,
     rope: Rope,
     cursors: Vec<Cursor>,
-    is_dirty: bool,
+    /// Id of the transaction on top of the undo stack when the buffer was last saved or loaded
+    /// (`None` means "the empty history"). The buffer is dirty whenever the current top differs,
+    /// so undoing back to the saved state makes the buffer clean again.
+    saved_tx_id: Option<u64>,
+    /// Character class of the last single-character typing transaction, used to coalesce
+    /// consecutive keystrokes of the same class into one undo step. `None` seals the history.
+    typing_coalesce: Option<CharClass>,
     version: i32,
     undo_stack: Vec<Transaction>,
     redo_stack: Vec<Transaction>,
@@ -134,7 +165,8 @@ impl TextBuffer {
             file_path: None,
             rope: Rope::from_str(text),
             cursors: vec![Cursor::new(0)],
-            is_dirty: false,
+            saved_tx_id: None,
+            typing_coalesce: None,
             version: 1,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
@@ -149,7 +181,7 @@ impl TextBuffer {
         let content = fs::read_to_string(path_ref)?;
         let mut buf = Self::new(id, &content);
         buf.file_path = Some(path_ref.to_path_buf());
-        buf.is_dirty = false;
+        buf.mark_clean();
         Ok(buf)
     }
 
@@ -158,17 +190,18 @@ impl TextBuffer {
         let path = self.file_path.as_ref().ok_or_else(|| {
             std::io::Error::new(std::io::ErrorKind::NotFound, "Buffer has no file path")
         })?;
-        fs::write(path, self.text())?;
-        self.is_dirty = false;
+        let path = path.clone();
+        write_file_atomically(&path, &self.text())?;
+        self.mark_clean();
         Ok(())
     }
 
     /// Saves the buffer contents to the specified file path and updates `file_path`.
     pub fn save_as(&mut self, path: impl AsRef<Path>) -> Result<(), BufferError> {
         let path_buf = path.as_ref().to_path_buf();
-        fs::write(&path_buf, self.text())?;
+        write_file_atomically(&path_buf, &self.text())?;
         self.file_path = Some(path_buf);
-        self.is_dirty = false;
+        self.mark_clean();
         Ok(())
     }
 
@@ -184,8 +217,37 @@ impl TextBuffer {
         self.file_path = Some(path.into());
     }
 
+    /// Returns true when the content differs from the last saved/loaded state.
     pub fn is_dirty(&self) -> bool {
-        self.is_dirty
+        let pending = self
+            .active_transaction
+            .as_ref()
+            .is_some_and(|tx| !tx.edits.is_empty());
+        pending || self.undo_stack.last().map(|t| t.id) != self.saved_tx_id
+    }
+
+    /// Marks the current content as the saved state (e.g. after saving or reloading from disk).
+    pub fn mark_clean(&mut self) {
+        if self.active_transaction.is_some() {
+            self.commit_transaction();
+        }
+        self.saved_tx_id = self.undo_stack.last().map(|t| t.id);
+        self.typing_coalesce = None;
+    }
+
+    /// Replaces the whole content (e.g. file changed on disk) as a single undoable step,
+    /// keeping the primary cursor at the same line/column where possible.
+    pub fn replace_all_text(&mut self, new_text: &str) -> Vec<BufferEdit> {
+        let (line, col) = self
+            .cursors
+            .first()
+            .map(|c| self.char_to_line_col(c.head))
+            .unwrap_or((0, 0));
+        self.typing_coalesce = None;
+        let len = self.rope.len_chars();
+        let edit = self.replace_range(0, len, new_text);
+        self.set_cursor_position(line, col, false);
+        vec![edit]
     }
 
     pub fn version(&self) -> i32 {
@@ -452,6 +514,14 @@ impl TextBuffer {
                     cursor.head = len_chars;
                     cursor.preferred_column = None;
                 }
+                CursorDirection::WordLeft => {
+                    cursor.head = self.word_boundary_left(cursor.head);
+                    cursor.preferred_column = None;
+                }
+                CursorDirection::WordRight => {
+                    cursor.head = self.word_boundary_right(cursor.head);
+                    cursor.preferred_column = None;
+                }
             }
             if !select {
                 cursor.anchor = cursor.head;
@@ -505,6 +575,7 @@ impl TextBuffer {
 
     /// Begins an explicit transaction group so multiple edits are undone/redone together.
     pub fn begin_transaction(&mut self) {
+        self.typing_coalesce = None;
         if self.active_transaction.is_none() {
             let id = self.next_tx_id;
             self.next_tx_id += 1;
@@ -562,7 +633,6 @@ impl TextBuffer {
         let new_end_byte = self.rope.char_to_byte(new_end_char);
         let new_end_point = self.char_to_byte_point(new_end_char);
 
-        self.is_dirty = true;
         self.version += 1;
 
         let buffer_edit = BufferEdit {
@@ -613,7 +683,27 @@ impl TextBuffer {
     /// Returns the list of `BufferEdit`s in the exact sequence applied.
     pub fn insert_text(&mut self, text: &str) -> Vec<BufferEdit> {
         let auto_tx = self.active_transaction.is_none();
-        if auto_tx {
+        let typing_class = {
+            let mut chars = text.chars();
+            match (chars.next(), chars.next()) {
+                (Some(c), None) if char_class(c) != CharClass::Newline => Some(char_class(c)),
+                _ => None,
+            }
+        };
+        let no_selection = self.cursors.iter().all(|c| !c.has_selection());
+        let coalesce = auto_tx
+            && no_selection
+            && typing_class.is_some()
+            && self.typing_coalesce == typing_class
+            && self.redo_stack.is_empty()
+            && self
+                .undo_stack
+                .last()
+                .is_some_and(|tx| tx.cursors_after == self.cursors);
+        if coalesce {
+            // Re-open the previous typing transaction so this keystroke joins it.
+            self.active_transaction = self.undo_stack.pop();
+        } else if auto_tx {
             self.begin_transaction();
         }
 
@@ -646,6 +736,7 @@ impl TextBuffer {
 
         if auto_tx {
             self.commit_transaction();
+            self.typing_coalesce = typing_class;
         }
         edits
     }
@@ -747,6 +838,7 @@ impl TextBuffer {
 
     /// Undoes the most recent transaction and returns the resulting `BufferEdit`s.
     pub fn undo(&mut self) -> Vec<BufferEdit> {
+        self.typing_coalesce = None;
         if self.active_transaction.is_some() {
             self.commit_transaction();
         }
@@ -773,6 +865,7 @@ impl TextBuffer {
 
     /// Redoes the most recently undone transaction and returns the resulting `BufferEdit`s.
     pub fn redo(&mut self) -> Vec<BufferEdit> {
+        self.typing_coalesce = None;
         if self.active_transaction.is_some() {
             self.commit_transaction();
         }
@@ -795,6 +888,413 @@ impl TextBuffer {
         self.normalize_cursors();
         self.undo_stack.push(tx);
         edits
+    }
+
+
+    // =========================================================================
+    // Selection, Clipboard & Block Editing Helpers
+    // =========================================================================
+
+    /// Returns the char index of the previous word boundary (VS Code style Ctrl+Left).
+    pub fn word_boundary_left(&self, pos: usize) -> usize {
+        let mut i = pos.min(self.rope.len_chars());
+        if i == 0 {
+            return 0;
+        }
+        // A newline directly before the cursor is its own stop.
+        if char_class(self.rope.char(i - 1)) == CharClass::Newline {
+            return i - 1;
+        }
+        while i > 0 && char_class(self.rope.char(i - 1)) == CharClass::Whitespace {
+            i -= 1;
+        }
+        if i == 0 {
+            return 0;
+        }
+        let class = char_class(self.rope.char(i - 1));
+        if class == CharClass::Newline {
+            return i;
+        }
+        while i > 0 && char_class(self.rope.char(i - 1)) == class {
+            i -= 1;
+        }
+        i
+    }
+
+    /// Returns the char index of the next word boundary (VS Code style Ctrl+Right).
+    pub fn word_boundary_right(&self, pos: usize) -> usize {
+        let len = self.rope.len_chars();
+        let mut i = pos.min(len);
+        if i >= len {
+            return len;
+        }
+        if char_class(self.rope.char(i)) == CharClass::Newline {
+            return i + 1;
+        }
+        while i < len && char_class(self.rope.char(i)) == CharClass::Whitespace {
+            i += 1;
+        }
+        if i >= len {
+            return len;
+        }
+        let class = char_class(self.rope.char(i));
+        if class == CharClass::Newline {
+            return i;
+        }
+        while i < len && char_class(self.rope.char(i)) == class {
+            i += 1;
+        }
+        i
+    }
+
+    /// Moves all cursors vertically by `delta` lines (negative = up), e.g. for PageUp/PageDown.
+    pub fn move_cursors_by_lines(&mut self, delta: i64, select: bool) {
+        let total_lines = self.len_lines() as i64;
+        let mut updated = Vec::with_capacity(self.cursors.len());
+        for mut cursor in self.cursors.iter().copied() {
+            let (line, col) = self.char_to_line_col(cursor.head);
+            let pref_col = cursor.preferred_column.unwrap_or(col);
+            let target = line as i64 + delta;
+            cursor.head = if target < 0 {
+                0
+            } else if target >= total_lines {
+                self.rope.len_chars()
+            } else {
+                self.line_col_to_char(target as u32, pref_col)
+            };
+            cursor.preferred_column = Some(pref_col);
+            if !select {
+                cursor.anchor = cursor.head;
+            }
+            updated.push(cursor);
+        }
+        self.cursors = updated;
+        self.normalize_cursors();
+    }
+
+    /// Selects the whole document with a single cursor.
+    pub fn select_all(&mut self) {
+        self.cursors = vec![Cursor::with_selection(0, self.rope.len_chars())];
+    }
+
+    /// Returns the text covered by all non-empty selections joined with `\n`, or `None`
+    /// when no cursor has a selection.
+    pub fn selected_text(&self) -> Option<String> {
+        let parts: Vec<String> = self
+            .cursors
+            .iter()
+            .filter(|c| c.has_selection())
+            .map(|c| {
+                let (s, e) = c.selection_range();
+                self.rope.slice(s..e).to_string()
+            })
+            .collect();
+        if parts.is_empty() {
+            None
+        } else {
+            Some(parts.join("\n"))
+        }
+    }
+
+    /// Selects the full line(s) of every cursor (including the trailing newline), used by
+    /// "cut line" when nothing is selected.
+    pub fn select_cursor_lines(&mut self) {
+        let total = self.rope.len_lines();
+        let mut updated = Vec::with_capacity(self.cursors.len());
+        for c in self.cursors.iter() {
+            let (s, e) = c.selection_range();
+            let (sl, _) = self.char_to_line_col(s);
+            let (el, _) = self.char_to_line_col(e);
+            let start = self.rope.line_to_char(sl as usize);
+            let end = if (el as usize) + 1 < total {
+                self.rope.line_to_char(el as usize + 1)
+            } else {
+                self.rope.len_chars()
+            };
+            updated.push(Cursor::with_selection(start, end));
+        }
+        self.cursors = updated;
+        self.normalize_cursors();
+    }
+
+    /// Returns the sorted, de-duplicated set of line indices touched by any cursor or selection.
+    /// A selection ending at column 0 of a line does not include that line (VS Code behavior).
+    pub fn cursor_line_set(&self) -> Vec<u32> {
+        let mut lines = std::collections::BTreeSet::new();
+        for c in &self.cursors {
+            let (s, e) = c.selection_range();
+            let (sl, _) = self.char_to_line_col(s);
+            let (mut el, ec) = self.char_to_line_col(e);
+            if c.has_selection() && ec == 0 && el > sl {
+                el -= 1;
+            }
+            for l in sl..=el {
+                lines.insert(l);
+            }
+        }
+        lines.into_iter().collect()
+    }
+
+    /// Returns the leading whitespace of a line.
+    pub fn line_indent(&self, line_idx: u32) -> String {
+        self.line_text(line_idx)
+            .unwrap_or_default()
+            .chars()
+            .take_while(|c| *c == ' ' || *c == '\t')
+            .collect()
+    }
+
+    /// Inserts a newline at every cursor, carrying over the current line's indentation and
+    /// adding one extra indent level after an opening bracket (`{`, `(`, `[`) or a `:` line end.
+    pub fn insert_newline_with_indent(&mut self, indent_unit: &str) -> Vec<BufferEdit> {
+        let cursor_count = self.cursors.len();
+        if cursor_count == 1 {
+            let c = self.cursors[0];
+            let (s, _) = c.selection_range();
+            let (line, col) = self.char_to_line_col(s);
+            let line_text = self.line_text(line).unwrap_or_default();
+            let indent = self.line_indent(line);
+            let before: String = line_text.chars().take(col as usize).collect();
+            let after: String = line_text.chars().skip(col as usize).collect();
+            let opens = matches!(before.trim_end().chars().last(), Some('{' | '(' | '[' | ':'));
+            let closes_next = matches!(after.trim_start().chars().next(), Some('}' | ')' | ']'));
+            if opens && closes_next {
+                // `{|}` -> "{\n    |\n}"
+                self.begin_transaction();
+                let mut edits = self.insert_text(&format!("\n{indent}{indent_unit}"));
+                let resume = self.cursors[0].head;
+                edits.extend(self.insert_text(&format!("\n{indent}")));
+                self.cursors = vec![Cursor::new(resume)];
+                self.commit_transaction();
+                return edits;
+            }
+            let extra = if opens { indent_unit } else { "" };
+            return self.insert_text(&format!("\n{indent}{extra}"));
+        }
+        self.insert_text("\n")
+    }
+
+    /// Indents every line touched by the cursors by `indent_unit` (Tab with a selection).
+    pub fn indent_lines(&mut self, indent_unit: &str) -> Vec<BufferEdit> {
+        let lines = self.cursor_line_set();
+        let saved: Vec<((u32, u32), (u32, u32))> = self
+            .cursors
+            .iter()
+            .map(|c| (self.char_to_line_col(c.anchor), self.char_to_line_col(c.head)))
+            .collect();
+        let unit_len = indent_unit.chars().count() as u32;
+        self.begin_transaction();
+        let mut edits = Vec::new();
+        for &l in lines.iter().rev() {
+            let start = self.rope.line_to_char(l as usize);
+            let (e, a) = self.apply_raw_edit(start, start, indent_unit);
+            if let Some(tx) = self.active_transaction.as_mut() {
+                tx.edits.push(a);
+            }
+            edits.push(e);
+        }
+        // Like VS Code, a selection edge at column 0 stays at column 0 so whole-line
+        // selections keep covering the inserted indentation.
+        let shifted = |line: u32, col: u32| {
+            if lines.contains(&line) && col > 0 {
+                col + unit_len
+            } else {
+                col
+            }
+        };
+        self.cursors = saved
+            .into_iter()
+            .map(|((al, ac), (hl, hc))| Cursor {
+                anchor: self.line_col_to_char(al, shifted(al, ac)),
+                head: self.line_col_to_char(hl, shifted(hl, hc)),
+                preferred_column: None,
+            })
+            .collect();
+        self.normalize_cursors();
+        self.commit_transaction();
+        edits
+    }
+
+    /// Removes up to one indent level (`indent_width` spaces or one tab) from every touched line.
+    pub fn outdent_lines(&mut self, indent_width: usize) -> Vec<BufferEdit> {
+        let lines = self.cursor_line_set();
+        let primary_line_col: Vec<((u32, u32), (u32, u32))> = self
+            .cursors
+            .iter()
+            .map(|c| (self.char_to_line_col(c.anchor), self.char_to_line_col(c.head)))
+            .collect();
+        self.begin_transaction();
+        let mut edits = Vec::new();
+        let mut removed_per_line = std::collections::BTreeMap::new();
+        for &l in lines.iter().rev() {
+            let text = self.line_text(l).unwrap_or_default();
+            let remove = if text.starts_with('\t') {
+                1
+            } else {
+                text.chars().take(indent_width).take_while(|c| *c == ' ').count()
+            };
+            if remove == 0 {
+                continue;
+            }
+            let start = self.rope.line_to_char(l as usize);
+            let (e, a) = self.apply_raw_edit(start, start + remove, "");
+            if let Some(tx) = self.active_transaction.as_mut() {
+                tx.edits.push(a);
+            }
+            edits.push(e);
+            removed_per_line.insert(l, remove as u32);
+        }
+        self.cursors = primary_line_col
+            .into_iter()
+            .map(|((al, ac), (hl, hc))| {
+                let ra = removed_per_line.get(&al).copied().unwrap_or(0);
+                let rh = removed_per_line.get(&hl).copied().unwrap_or(0);
+                let anchor = self.line_col_to_char(al, ac.saturating_sub(ra));
+                let head = self.line_col_to_char(hl, hc.saturating_sub(rh));
+                Cursor {
+                    anchor,
+                    head,
+                    preferred_column: None,
+                }
+            })
+            .collect();
+        self.normalize_cursors();
+        self.commit_transaction();
+        edits
+    }
+
+    /// Toggles a line comment (`prefix`, e.g. `//` or `#`) on every touched line. If all
+    /// non-blank lines are already commented, the comment is removed; otherwise it is added at
+    /// the minimum indentation column.
+    pub fn toggle_line_comment(&mut self, prefix: &str) -> Vec<BufferEdit> {
+        let lines = self.cursor_line_set();
+        let texts: Vec<(u32, String)> = lines
+            .iter()
+            .map(|&l| (l, self.line_text(l).unwrap_or_default()))
+            .collect();
+        let non_blank: Vec<&(u32, String)> =
+            texts.iter().filter(|(_, t)| !t.trim().is_empty()).collect();
+        if non_blank.is_empty() {
+            return Vec::new();
+        }
+        let all_commented = non_blank
+            .iter()
+            .all(|(_, t)| t.trim_start().starts_with(prefix));
+        let min_indent = non_blank
+            .iter()
+            .map(|(_, t)| t.chars().take_while(|c| *c == ' ' || *c == '\t').count())
+            .min()
+            .unwrap_or(0);
+        let saved: Vec<((u32, u32), (u32, u32))> = self
+            .cursors
+            .iter()
+            .map(|c| (self.char_to_line_col(c.anchor), self.char_to_line_col(c.head)))
+            .collect();
+        let mut delta_per_line: std::collections::BTreeMap<u32, (u32, i64)> =
+            std::collections::BTreeMap::new();
+        self.begin_transaction();
+        let mut edits = Vec::new();
+        for (l, t) in texts.iter().rev() {
+            if t.trim().is_empty() {
+                continue;
+            }
+            let line_start = self.rope.line_to_char(*l as usize);
+            if all_commented {
+                let indent = t.chars().take_while(|c| *c == ' ' || *c == '\t').count();
+                let after_prefix: String = t.chars().skip(indent + prefix.chars().count()).collect();
+                let mut remove = prefix.chars().count();
+                if after_prefix.starts_with(' ') {
+                    remove += 1;
+                }
+                let s = line_start + indent;
+                let (e, a) = self.apply_raw_edit(s, s + remove, "");
+                if let Some(tx) = self.active_transaction.as_mut() {
+                    tx.edits.push(a);
+                }
+                edits.push(e);
+                delta_per_line.insert(*l, (indent as u32, -(remove as i64)));
+            } else {
+                let insert = format!("{prefix} ");
+                let s = line_start + min_indent;
+                let (e, a) = self.apply_raw_edit(s, s, &insert);
+                if let Some(tx) = self.active_transaction.as_mut() {
+                    tx.edits.push(a);
+                }
+                edits.push(e);
+                delta_per_line.insert(*l, (min_indent as u32, insert.chars().count() as i64));
+            }
+        }
+        let adjust = |line: u32, col: u32| -> u32 {
+            match delta_per_line.get(&line) {
+                Some(&(at, d)) if col >= at => (col as i64 + d).max(at as i64) as u32,
+                _ => col,
+            }
+        };
+        self.cursors = saved
+            .into_iter()
+            .map(|((al, ac), (hl, hc))| Cursor {
+                anchor: self.line_col_to_char(al, adjust(al, ac)),
+                head: self.line_col_to_char(hl, adjust(hl, hc)),
+                preferred_column: None,
+            })
+            .collect();
+        self.normalize_cursors();
+        self.commit_transaction();
+        edits
+    }
+
+    /// Selects the next occurrence of the primary selection (or the word under the cursor when
+    /// nothing is selected) and adds it as a new cursor (VS Code Ctrl+D). Returns true if a new
+    /// occurrence was added or the word was selected.
+    pub fn add_next_occurrence(&mut self) -> bool {
+        let Some(last) = self.cursors.iter().max_by_key(|c| c.selection_range().1).copied() else {
+            return false;
+        };
+        if !last.has_selection() {
+            let start = self.word_start_at(last.head);
+            let end = self.word_end_at(last.head);
+            if start == end {
+                return false;
+            }
+            self.cursors = vec![Cursor::with_selection(start, end)];
+            return true;
+        }
+        let (s, e) = last.selection_range();
+        let needle = self.rope.slice(s..e).to_string();
+        let hay = self.rope.to_string();
+        let from_byte = self.rope.char_to_byte(e);
+        let found = hay[from_byte..]
+            .find(&needle)
+            .map(|b| from_byte + b)
+            .or_else(|| hay.find(&needle));
+        let Some(byte) = found else {
+            return false;
+        };
+        let ns = self.rope.byte_to_char(byte);
+        let ne = ns + needle.chars().count();
+        if self.cursors.iter().any(|c| c.selection_range() == (ns, ne)) {
+            return false;
+        }
+        self.cursors.push(Cursor::with_selection(ns, ne));
+        self.normalize_cursors();
+        true
+    }
+
+    fn word_start_at(&self, pos: usize) -> usize {
+        let mut i = pos.min(self.rope.len_chars());
+        while i > 0 && char_class(self.rope.char(i - 1)) == CharClass::Word {
+            i -= 1;
+        }
+        i
+    }
+
+    fn word_end_at(&self, pos: usize) -> usize {
+        let len = self.rope.len_chars();
+        let mut i = pos.min(len);
+        while i < len && char_class(self.rope.char(i)) == CharClass::Word {
+            i += 1;
+        }
+        i
     }
 
     // =========================================================================
@@ -879,6 +1379,35 @@ impl TextBuffer {
 
         results
     }
+}
+
+/// Writes `contents` to `path` atomically: a sibling temporary file is written, flushed and
+/// then renamed over the destination, so a crash never leaves a half-written file. Existing
+/// file permissions are preserved.
+fn write_file_atomically(path: &Path, contents: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    let dir = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let file_name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "buffer".to_string());
+    let tmp = dir.join(format!(".{file_name}.levity-save-{}", std::process::id()));
+    let result = (|| {
+        let mut f = fs::File::create(&tmp)?;
+        f.write_all(contents.as_bytes())?;
+        f.sync_all()?;
+        if let Ok(meta) = fs::metadata(path) {
+            fs::set_permissions(&tmp, meta.permissions())?;
+        }
+        fs::rename(&tmp, path)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    result
 }
 
 #[cfg(test)]
@@ -1068,5 +1597,140 @@ mod tests {
         assert_eq!(edit.start_point, BytePoint { row: 0, column: 8 });
         assert_eq!(edit.old_end_point, BytePoint { row: 0, column: 9 });
         assert_eq!(edit.new_end_point, BytePoint { row: 0, column: 11 });
+    }
+
+    #[test]
+    fn test_word_movement_and_page_moves() {
+        let mut buf = TextBuffer::new(1, "let foo_bar = baz(1);\nnext line\nthird\nfourth\n");
+        buf.move_cursors(CursorDirection::WordRight, false);
+        assert_eq!(buf.cursors()[0].head, 3);
+        buf.move_cursors(CursorDirection::WordRight, false);
+        assert_eq!(buf.cursors()[0].head, 11);
+        buf.move_cursors(CursorDirection::WordLeft, false);
+        assert_eq!(buf.cursors()[0].head, 4);
+        buf.move_cursors(CursorDirection::WordRight, true);
+        assert_eq!(buf.selected_text().as_deref(), Some("foo_bar"));
+        buf.set_cursor_position(0, 2, false);
+        buf.move_cursors_by_lines(2, false);
+        assert_eq!(buf.char_to_line_col(buf.cursors()[0].head), (2, 2));
+        buf.move_cursors_by_lines(-10, false);
+        assert_eq!(buf.cursors()[0].head, 0);
+        buf.move_cursors_by_lines(100, true);
+        assert_eq!(buf.cursors()[0].head, buf.len_chars());
+    }
+
+    #[test]
+    fn test_select_all_selected_text_and_cut_line_selection() {
+        let mut buf = TextBuffer::new(1, "alpha\nbeta\ngamma");
+        assert_eq!(buf.selected_text(), None);
+        buf.select_all();
+        assert_eq!(buf.selected_text().as_deref(), Some("alpha\nbeta\ngamma"));
+        buf.set_cursor_position(1, 2, false);
+        buf.select_cursor_lines();
+        assert_eq!(buf.selected_text().as_deref(), Some("beta\n"));
+        buf.delete_backward();
+        assert_eq!(buf.text(), "alpha\ngamma");
+    }
+
+    #[test]
+    fn test_dirty_tracking_returns_clean_after_undo_to_save_point() {
+        let dir = std::env::temp_dir().join(format!("levity-buf-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("dirty.txt");
+        fs::write(&path, "abc").unwrap();
+        let mut buf = TextBuffer::from_file(1, &path).unwrap();
+        assert!(!buf.is_dirty());
+        buf.set_cursor_position(0, 3, false);
+        buf.insert_text("d");
+        assert!(buf.is_dirty());
+        buf.undo();
+        assert!(!buf.is_dirty(), "undo back to the saved content must be clean");
+        buf.redo();
+        assert!(buf.is_dirty());
+        buf.save().unwrap();
+        assert!(!buf.is_dirty());
+        assert_eq!(fs::read_to_string(&path).unwrap(), "abcd");
+        // No temporary save files are left behind.
+        let leftovers: Vec<_> = fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().contains("levity-save"))
+            .collect();
+        assert!(leftovers.is_empty());
+        buf.insert_text("e");
+        assert!(buf.is_dirty());
+        buf.undo();
+        assert!(!buf.is_dirty());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_typing_is_coalesced_into_word_sized_undo_steps() {
+        let mut buf = TextBuffer::new(1, "");
+        for ch in "hello world".chars() {
+            buf.insert_text(&ch.to_string());
+        }
+        assert_eq!(buf.text(), "hello world");
+        buf.undo();
+        assert_eq!(buf.text(), "hello ");
+        buf.undo();
+        assert_eq!(buf.text(), "hello");
+        buf.undo();
+        assert_eq!(buf.text(), "");
+        // Moving the cursor breaks the group.
+        buf.insert_text("a");
+        buf.insert_text("b");
+        buf.move_cursors(CursorDirection::Left, false);
+        buf.insert_text("c");
+        assert_eq!(buf.text(), "acb");
+        buf.undo();
+        assert_eq!(buf.text(), "ab");
+    }
+
+    #[test]
+    fn test_indent_outdent_and_toggle_comment_blocks() {
+        let mut buf = TextBuffer::new(1, "fn a() {\nlet x = 1;\nlet y = 2;\n}\n");
+        buf.set_cursor_position(1, 0, false);
+        buf.set_cursor_position(2, 3, true);
+        buf.indent_lines("    ");
+        assert_eq!(buf.text(), "fn a() {\n    let x = 1;\n    let y = 2;\n}\n");
+        assert_eq!(buf.selected_text().as_deref(), Some("    let x = 1;\n    let"));
+        buf.outdent_lines(4);
+        assert_eq!(buf.text(), "fn a() {\nlet x = 1;\nlet y = 2;\n}\n");
+        buf.toggle_line_comment("//");
+        assert_eq!(buf.text(), "fn a() {\n// let x = 1;\n// let y = 2;\n}\n");
+        buf.toggle_line_comment("//");
+        assert_eq!(buf.text(), "fn a() {\nlet x = 1;\nlet y = 2;\n}\n");
+        buf.undo();
+        assert_eq!(buf.text(), "fn a() {\n// let x = 1;\n// let y = 2;\n}\n");
+    }
+
+    #[test]
+    fn test_newline_auto_indent_and_bracket_expansion() {
+        let mut buf = TextBuffer::new(1, "    fn a() {}");
+        buf.set_cursor_position(0, 12, false);
+        buf.insert_newline_with_indent("    ");
+        assert_eq!(buf.text(), "    fn a() {\n        \n    }");
+        assert_eq!(buf.char_to_line_col(buf.cursors()[0].head), (1, 8));
+        buf.undo();
+        assert_eq!(buf.text(), "    fn a() {}");
+        let mut plain = TextBuffer::new(2, "  value");
+        plain.set_cursor_position(0, 7, false);
+        plain.insert_newline_with_indent("    ");
+        assert_eq!(plain.text(), "  value\n  ");
+    }
+
+    #[test]
+    fn test_add_next_occurrence_multi_cursor() {
+        let mut buf = TextBuffer::new(1, "foo bar foo baz foo");
+        buf.set_cursor_position(0, 1, false);
+        assert!(buf.add_next_occurrence());
+        assert_eq!(buf.selected_text().as_deref(), Some("foo"));
+        assert!(buf.add_next_occurrence());
+        assert!(buf.add_next_occurrence());
+        assert_eq!(buf.cursors().len(), 3);
+        assert!(!buf.add_next_occurrence());
+        buf.insert_text("qux");
+        assert_eq!(buf.text(), "qux bar qux baz qux");
     }
 }
