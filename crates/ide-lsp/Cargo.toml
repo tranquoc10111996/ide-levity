@@ -10,3 +10,12 @@ serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 parking_lot = "0.12"
 thiserror = "2"
+url = "2"
+toml = "0.8"
+base64 = "0.22"
+sha1_smol = "1"
+fastrand = "2"
+
+[dev-dependencies]
+tempfile = "3"
+

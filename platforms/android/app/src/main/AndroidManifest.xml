@@ -5,12 +5,15 @@
 
     <application
         android:allowBackup="true"
-        android:label="IDE Levity"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
         android:supportsRtl="true"
-        android:theme="@android:style/Theme.Material.NoActionBar">
+        android:theme="@style/Theme.IdeLevity">
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:configChanges="keyboard|keyboardHidden|navigation"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

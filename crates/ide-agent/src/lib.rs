@@ -322,6 +322,57 @@ impl AgentManager {
         id
     }
 
+    /// Registers a new `AgentTask` in `Running` state for an asynchronous AI provider request.
+    pub fn start_running_task(&self, prompt: impl Into<String>, summary: impl Into<String>) -> u64 {
+        let id = self.next_id.fetch_add(1, Ordering::SeqCst);
+        let task = AgentTask {
+            id,
+            prompt: prompt.into(),
+            state: AgentTaskState::Running,
+            verification: VerificationState::Running,
+            patch: None,
+            summary: summary.into(),
+        };
+        self.tasks.write().insert(id, task);
+        id
+    }
+
+    /// Completes a running `AgentTask` with the proposed file text from an AI provider.
+    pub fn complete_task_with_proposal(
+        &self,
+        task_id: u64,
+        target_path: &str,
+        original_text: &str,
+        proposed_text: &str,
+        summary: impl Into<String>,
+    ) -> Result<(), AgentError> {
+        let patch = UnifiedDiffPatch::generate(target_path, original_text, proposed_text);
+        let mut guard = self.tasks.write();
+        let task = guard
+            .get_mut(&task_id)
+            .ok_or(AgentError::TaskNotFound(task_id))?;
+        task.patch = Some(patch);
+        task.state = AgentTaskState::AwaitingReview;
+        task.verification = VerificationState::Pending;
+        task.summary = summary.into();
+        Ok(())
+    }
+
+    /// Marks a running `AgentTask` as failed with an error message.
+    pub fn fail_task(&self, task_id: u64, message: impl Into<String>) -> Result<(), AgentError> {
+        let msg = message.into();
+        let mut guard = self.tasks.write();
+        let task = guard
+            .get_mut(&task_id)
+            .ok_or(AgentError::TaskNotFound(task_id))?;
+        task.state = AgentTaskState::Failed {
+            message: msg.clone(),
+        };
+        task.verification = VerificationState::Failed { details: msg.clone() };
+        task.summary = msg;
+        Ok(())
+    }
+
     /// Applies the patch from `task_id` into `buffer` and marks the task as `Applied`.
     pub fn apply_task_patch(
         &self,

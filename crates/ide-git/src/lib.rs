@@ -1,457 +1,425 @@
-//! `ide-git`: Git engine integration powered by `gix` (`gitoxide`).
-//! Reads current branch name, changed file list, and per-line gutter diff markers (`Added`, `Modified`, `Deleted`).
+//! `ide-git`: Git engine for IDE Levity, powered by `gix` (gitoxide).
+//!
+//! Read side:
+//! * current branch, HEAD file contents and per-line gutter diff markers
+//!   ([`GitRepository::diff_buffer_lines`], cached per HEAD commit),
+//! * detailed status distinguishing staged and unstaged changes
+//!   ([`GitRepository::status_detailed`]),
+//! * unified diffs of single files ([`GitRepository::file_diff`]),
+//! * HEAD commit summary and local branches.
+//!
+//! Write side (Source Control panel):
+//! * [`GitRepository::stage`], [`GitRepository::stage_all`], [`GitRepository::unstage`],
+//! * [`GitRepository::discard_worktree_changes`], [`GitRepository::delete_untracked`],
+//! * [`GitRepository::commit`], [`GitRepository::create_branch`],
+//!   [`GitRepository::checkout_branch`].
+//!
+//! Everything is implemented with `gix` 0.66 directly (index mutation, blob/tree/commit
+//! writing, reference edits); the `git` executable is not required.
+//!
+//! # Threading
+//!
+//! [`GitRepository`] is `Clone + Send + Sync` and cheap to clone. All methods are
+//! synchronous and touch the filesystem, so a GUI should call them from a background
+//! thread (or `tokio::task::spawn_blocking`). Write operations take the index lock
+//! (`.git/index.lock`) and fail fast if another process holds it.
+
+mod branch;
+mod commit;
+mod diff;
+mod gutter;
+mod index_ops;
+mod status;
+mod util;
+
+pub use branch::BranchInfo;
+pub use commit::CommitSummary;
+pub use gutter::compute_line_diff;
+pub use status::{ChangeKind, StatusEntry};
 
 use gix::bstr::ByteSlice;
+use gix::ObjectId;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use thiserror::Error;
 
+/// Errors returned by [`GitRepository`] operations.
 #[derive(Debug, Error)]
 pub enum GitError {
+    /// The repository could not be discovered or opened.
     #[error("Failed to open git repository: {0}")]
     Open(String),
+    /// A lower level `gix` operation failed.
     #[error("Git repository operation failed: {0}")]
     Repo(String),
+    /// Filesystem error.
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
+    /// The operation needs a worktree but the repository is bare.
+    #[error("the repository has no worktree (bare repository)")]
+    Bare,
+    /// A path argument points outside of the worktree.
+    #[error("path is outside of the repository worktree: {0}")]
+    PathOutsideWorktree(String),
+    /// No author identity was given and none is configured.
+    #[error("no git identity configured: set user.name and user.email with `git config` or pass an author")]
+    MissingIdentity,
+    /// The index matches `HEAD`, so a commit would be empty.
+    #[error("nothing to commit: no staged changes")]
+    NothingToCommit,
+    /// The commit message is empty after whitespace cleanup.
+    #[error("aborting commit due to empty commit message")]
+    EmptyMessage,
+    /// The index contains unresolved merge conflicts.
+    #[error("unmerged paths must be resolved first: {}", .0.join(", "))]
+    Unmerged(Vec<String>),
+    /// The named local branch does not exist.
+    #[error("branch not found: {0}")]
+    BranchNotFound(String),
+    /// The branch name is not a valid git reference name.
+    #[error("invalid branch name `{0}`: {1}")]
+    InvalidBranchName(String, String),
+    /// A branch with this name already exists.
+    #[error("a branch named `{0}` already exists")]
+    BranchExists(String),
+    /// `HEAD` has no commit yet (unborn branch).
+    #[error("HEAD does not point to a commit yet")]
+    UnbornHead,
+    /// A checkout would overwrite local modifications or untracked files.
+    #[error("your local changes to the following files would be overwritten: {}", .0.join(", "))]
+    WouldOverwrite(Vec<String>),
+    /// [`GitRepository::delete_untracked`] was asked to delete a path that is not untracked.
+    #[error("not an untracked path: {0}")]
+    NotUntracked(String),
+}
+
+pub(crate) fn repo_err(err: impl std::fmt::Display) -> GitError {
+    GitError::Repo(err.to_string())
 }
 
 /// Kind of change for a file in the working tree compared to `HEAD`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FileChangeKind {
+    /// Not in `HEAD` but present in the worktree (staged or untracked).
     Added,
+    /// Present in both with different content or mode.
     Modified,
+    /// In `HEAD` but missing from the worktree.
     Deleted,
 }
 
 /// Status of a changed file in the Git working tree.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GitFileStatus {
+    /// Repository-relative path with `/` separators.
     pub path: String,
+    /// Change compared to `HEAD`.
     pub kind: FileChangeKind,
 }
 
 /// Kind of diff marker for a single line in the editor gutter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DiffMarkerKind {
+    /// No change (never emitted by [`compute_line_diff`], kept for consumers).
     Unchanged,
+    /// Line was added.
     Added,
+    /// Line replaced one or more old lines.
     Modified,
+    /// Old lines were deleted just before this line.
     Deleted,
 }
 
 /// Per-line git diff marker exported to `ViewportViewModel`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LineDiffStatus {
+    /// Zero-based line number in the current buffer.
     pub line_number: u32,
+    /// Marker kind.
     pub status: DiffMarkerKind,
 }
 
-/// Git repository handle backed by `gix`.
+/// Maximum number of HEAD blobs kept by the gutter cache.
+const HEAD_CACHE_CAPACITY: usize = 32;
+
+/// Cache of HEAD file contents used by [`GitRepository::diff_buffer_lines`].
+/// Entries are valid for a single HEAD commit and dropped when HEAD moves.
+#[derive(Default)]
+struct HeadBlobCache {
+    head: Option<ObjectId>,
+    /// Most recently used entries last.
+    entries: Vec<(String, Option<Arc<str>>)>,
+}
+
+impl HeadBlobCache {
+    fn get(&mut self, head: Option<ObjectId>, path: &str) -> Option<Option<Arc<str>>> {
+        if self.head != head {
+            self.head = head;
+            self.entries.clear();
+            return None;
+        }
+        let pos = self.entries.iter().position(|(p, _)| p == path)?;
+        let entry = self.entries.remove(pos);
+        let value = entry.1.clone();
+        self.entries.push(entry);
+        Some(value)
+    }
+
+    fn put(&mut self, head: Option<ObjectId>, path: String, value: Option<Arc<str>>) {
+        if self.head != head {
+            self.head = head;
+            self.entries.clear();
+        }
+        self.entries.retain(|(p, _)| *p != path);
+        if self.entries.len() >= HEAD_CACHE_CAPACITY {
+            self.entries.remove(0);
+        }
+        self.entries.push((path, value));
+    }
+}
+
+/// Git repository handle backed by `gix`. Cheap to clone and safe to share across threads.
+#[derive(Clone)]
 pub struct GitRepository {
+    repo: gix::ThreadSafeRepository,
     workdir: PathBuf,
-    git_dir: PathBuf,
+    has_worktree: bool,
+    head_cache: Arc<Mutex<HeadBlobCache>>,
+}
+
+impl std::fmt::Debug for GitRepository {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GitRepository")
+            .field("workdir", &self.workdir)
+            .field("git_dir", &self.repo.git_dir())
+            .finish()
+    }
 }
 
 impl GitRepository {
-    /// Opens or discovers a Git repository starting at `path`.
+    /// Opens or discovers a Git repository starting at `path` (searching parent directories).
     pub fn open(path: impl AsRef<Path>) -> Result<Self, GitError> {
         let repo = gix::discover(path.as_ref()).map_err(|e| GitError::Open(e.to_string()))?;
-        let git_dir = repo.path().to_path_buf();
+        let has_worktree = repo.work_dir().is_some();
         let workdir = repo
             .work_dir()
-            .map(|p| p.to_path_buf())
+            .map(Path::to_path_buf)
             .unwrap_or_else(|| path.as_ref().to_path_buf());
-        Ok(Self { workdir, git_dir })
+        Ok(Self {
+            repo: repo.into_sync(),
+            workdir,
+            has_worktree,
+            head_cache: Arc::default(),
+        })
     }
 
+    /// Root directory of the worktree.
     pub fn workdir(&self) -> &Path {
         &self.workdir
     }
 
-    fn reopen(&self) -> Result<gix::Repository, GitError> {
-        gix::open(&self.git_dir).map_err(|e| GitError::Open(e.to_string()))
+    /// Path of the `.git` directory.
+    pub fn git_dir(&self) -> &Path {
+        self.repo.git_dir()
+    }
+
+    /// Thread-local repository instance for one operation.
+    pub(crate) fn local(&self) -> gix::Repository {
+        self.repo.to_thread_local()
+    }
+
+    pub(crate) fn require_worktree(&self) -> Result<&Path, GitError> {
+        if self.has_worktree {
+            Ok(&self.workdir)
+        } else {
+            Err(GitError::Bare)
+        }
+    }
+
+    /// Converts a path (absolute, or relative to the worktree root) into a normalized
+    /// repository-relative path with `/` separators. The worktree root maps to `""`.
+    pub(crate) fn rela_path(&self, path: &Path) -> Result<String, GitError> {
+        let relative = if path.is_absolute() {
+            match path.strip_prefix(&self.workdir) {
+                Ok(rel) => rel.to_path_buf(),
+                Err(_) => {
+                    let canonical_root = self.workdir.canonicalize()?;
+                    let canonical = canonicalize_lenient(path);
+                    canonical
+                        .strip_prefix(&canonical_root)
+                        .map(Path::to_path_buf)
+                        .map_err(|_| {
+                            GitError::PathOutsideWorktree(path.display().to_string())
+                        })?
+                }
+            }
+        } else {
+            path.to_path_buf()
+        };
+        let mut parts: Vec<String> = Vec::new();
+        for component in relative.components() {
+            match component {
+                Component::Normal(part) => parts.push(part.to_string_lossy().into_owned()),
+                Component::CurDir => {}
+                Component::ParentDir => {
+                    if parts.pop().is_none() {
+                        return Err(GitError::PathOutsideWorktree(path.display().to_string()));
+                    }
+                }
+                Component::RootDir | Component::Prefix(_) => {
+                    return Err(GitError::PathOutsideWorktree(path.display().to_string()))
+                }
+            }
+        }
+        let rela = parts.join("/");
+        if rela == ".git" || rela.starts_with(".git/") {
+            return Err(GitError::PathOutsideWorktree(path.display().to_string()));
+        }
+        Ok(rela)
     }
 
     /// Returns the short name of the current branch (e.g., `"main"`), or `"HEAD (detached)"`.
     pub fn current_branch(&self) -> Result<String, GitError> {
-        let repo = self.reopen()?;
-        match repo.head_name().map_err(|e| GitError::Repo(e.to_string()))? {
+        let repo = self.local();
+        match repo.head_name().map_err(repo_err)? {
             Some(name) => Ok(name.shorten().to_str_lossy().into_owned()),
             None => Ok("HEAD (detached)".to_string()),
         }
     }
 
-    /// Reads the UTF-8 content of a file at `HEAD`, if it exists in the `HEAD` tree.
+    /// Reads the content of a file at `HEAD` (lossily decoded as UTF-8), or `None` if
+    /// the path is not a file in the `HEAD` tree or `HEAD` is unborn.
+    ///
+    /// Results are cached per HEAD commit.
     pub fn head_file_content(&self, relative_path: &Path) -> Result<Option<String>, GitError> {
-        let repo = self.reopen()?;
-        let Ok(mut head) = repo.head() else {
-            return Ok(None);
-        };
-        let Ok(commit) = head.peel_to_commit_in_place() else {
-            return Ok(None);
-        };
-        let Ok(tree) = commit.tree() else {
-            return Ok(None);
-        };
-        let rel_str = relative_path.to_string_lossy().replace('\\', "/");
-        let mut scratch = Vec::new();
-        let Ok(Some(entry)) = tree.lookup_entry_by_path(rel_str.as_str(), &mut scratch) else {
-            return Ok(None);
-        };
-        let obj = repo
-            .find_object(entry.oid())
-            .map_err(|e| GitError::Repo(e.to_string()))?;
-        Ok(Some(String::from_utf8_lossy(&obj.data).into_owned()))
+        Ok(self
+            .cached_head_content(relative_path)?
+            .map(|text| text.to_string()))
     }
 
-    /// Lists all files changed between `HEAD` and the working directory (`Added`, `Modified`, `Deleted`).
-    pub fn changed_files(&self) -> Result<Vec<GitFileStatus>, GitError> {
-        let repo = self.reopen()?;
-        let mut head_files: BTreeMap<String, Vec<u8>> = BTreeMap::new();
-
-        if let Ok(mut head) = repo.head() {
-            if let Ok(commit) = head.peel_to_commit_in_place() {
-                if let Ok(tree) = commit.tree() {
-                    collect_tree_blobs(&repo, &tree, "", &mut head_files)?;
-                }
-            }
+    fn cached_head_content(&self, path: &Path) -> Result<Option<Arc<str>>, GitError> {
+        let rela = self.rela_path(path)?;
+        let repo = self.local();
+        let head = util::head_commit_id(&repo)?;
+        if let Some(hit) = self
+            .head_cache
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .get(head, &rela)
+        {
+            return Ok(hit);
         }
+        let content = match head {
+            None => None,
+            Some(commit) => util::blob_at_commit(&repo, commit, &rela)?
+                .map(|data| Arc::<str>::from(String::from_utf8_lossy(&data).as_ref())),
+        };
+        self.head_cache
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .put(head, rela, content.clone());
+        Ok(content)
+    }
 
-        let mut work_files: BTreeSet<String> = BTreeSet::new();
-        collect_workdir_files(&self.workdir, &self.workdir, &mut work_files)?;
-
-        let mut statuses = Vec::new();
-
-        for (rel_path, head_bytes) in &head_files {
-            if !work_files.contains(rel_path) {
-                statuses.push(GitFileStatus {
-                    path: rel_path.clone(),
-                    kind: FileChangeKind::Deleted,
-                });
-            } else {
-                let full_path = self.workdir.join(rel_path);
-                if let Ok(disk_bytes) = fs::read(&full_path) {
-                    if &disk_bytes != head_bytes {
-                        statuses.push(GitFileStatus {
-                            path: rel_path.clone(),
-                            kind: FileChangeKind::Modified,
-                        });
+    /// Lists all files changed between `HEAD` and the working directory
+    /// (`Added`, `Modified`, `Deleted`), respecting `.gitignore`. Sorted by path.
+    pub fn changed_files(&self) -> Result<Vec<GitFileStatus>, GitError> {
+        use ChangeKind as K;
+        let mut out = Vec::new();
+        for entry in self.status_detailed()? {
+            let mut push = |path: &str, kind| {
+                out.push(GitFileStatus {
+                    path: path.to_owned(),
+                    kind,
+                })
+            };
+            match (entry.index_status, entry.worktree_status) {
+                (Some(K::Renamed), wt) => {
+                    if let Some(original) = &entry.original_path {
+                        push(original, FileChangeKind::Deleted);
+                    }
+                    if wt != Some(K::Deleted) {
+                        push(&entry.path, FileChangeKind::Added);
                     }
                 }
+                (Some(K::Added), Some(K::Deleted)) => {}
+                (Some(K::Added), _) => push(&entry.path, FileChangeKind::Added),
+                (Some(K::Deleted), Some(K::Untracked)) => {
+                    push(&entry.path, FileChangeKind::Modified)
+                }
+                (Some(K::Deleted), _) => push(&entry.path, FileChangeKind::Deleted),
+                (_, Some(K::Deleted)) => push(&entry.path, FileChangeKind::Deleted),
+                (_, Some(K::Untracked)) => push(&entry.path, FileChangeKind::Added),
+                _ => push(&entry.path, FileChangeKind::Modified),
             }
         }
-
-        for rel_path in work_files {
-            if !head_files.contains_key(&rel_path) {
-                statuses.push(GitFileStatus {
-                    path: rel_path,
-                    kind: FileChangeKind::Added,
-                });
-            }
-        }
-
-        statuses.sort_by(|a, b| a.path.cmp(&b.path));
-        Ok(statuses)
+        out.sort_by(|a, b| a.path.cmp(&b.path));
+        out.dedup();
+        Ok(out)
     }
 
     /// Computes gutter diff markers (`Added`, `Modified`, `Deleted`) for `current_text`
     /// compared against the version of `file_path` in `HEAD`.
+    ///
+    /// Designed to run on every edit: the HEAD blob is cached per (path, HEAD commit)
+    /// and the diff uses the histogram algorithm. Files not in `HEAD` are all `Added`.
     pub fn diff_buffer_lines(
         &self,
         file_path: impl AsRef<Path>,
         current_text: &str,
     ) -> Result<Vec<LineDiffStatus>, GitError> {
-        let path_ref = file_path.as_ref();
-        let rel_path = path_ref
-            .strip_prefix(&self.workdir)
-            .unwrap_or(path_ref);
-
-        match self.head_file_content(rel_path)? {
+        match self.cached_head_content(file_path.as_ref())? {
             Some(old_text) => Ok(compute_line_diff(&old_text, current_text)),
-            None => {
-                // Untracked/new file: all lines are Added
-                let lines = split_lines(current_text);
-                Ok((0..lines.len() as u32)
-                    .map(|line_number| LineDiffStatus {
-                        line_number,
-                        status: DiffMarkerKind::Added,
-                    })
-                    .collect())
-            }
+            None => Ok((0..gutter::split_lines(current_text).len() as u32)
+                .map(|line_number| LineDiffStatus {
+                    line_number,
+                    status: DiffMarkerKind::Added,
+                })
+                .collect()),
         }
     }
 }
 
-fn collect_tree_blobs(
-    repo: &gix::Repository,
-    tree: &gix::Tree<'_>,
-    prefix: &str,
-    out: &mut BTreeMap<String, Vec<u8>>,
-) -> Result<(), GitError> {
-    for entry_res in tree.iter() {
-        let entry = entry_res.map_err(|e| GitError::Repo(e.to_string()))?;
-        let name = entry.filename().to_str_lossy();
-        let rel = if prefix.is_empty() {
-            name.into_owned()
-        } else {
-            format!("{prefix}/{name}")
-        };
-        if entry.mode().is_tree() {
-            let obj = repo
-                .find_object(entry.oid())
-                .map_err(|e| GitError::Repo(e.to_string()))?;
-            let sub_tree = obj.into_tree();
-            collect_tree_blobs(repo, &sub_tree, &rel, out)?;
-        } else if entry.mode().is_blob() {
-            let obj = repo
-                .find_object(entry.oid())
-                .map_err(|e| GitError::Repo(e.to_string()))?;
-            out.insert(rel, obj.data.clone());
-        }
-    }
-    Ok(())
-}
-
-fn collect_workdir_files(
-    root: &Path,
-    current: &Path,
-    out: &mut BTreeSet<String>,
-) -> Result<(), GitError> {
-    if !current.exists() {
-        return Ok(());
-    }
-    for entry in fs::read_dir(current)? {
-        let entry = entry?;
-        let file_name = entry.file_name();
-        let name_str = file_name.to_string_lossy();
-        if name_str == ".git" || name_str == "target" || name_str == "node_modules" {
-            continue;
-        }
-        let path = entry.path();
-        if path.is_dir() {
-            collect_workdir_files(root, &path, out)?;
-        } else if path.is_file() {
-            if let Ok(rel) = path.strip_prefix(root) {
-                out.insert(rel.to_string_lossy().replace('\\', "/"));
+/// Canonicalizes the longest existing ancestor of `path` and re-appends the rest, so
+/// paths of deleted files can still be related to the worktree root.
+fn canonicalize_lenient(path: &Path) -> PathBuf {
+    let mut existing = path.to_path_buf();
+    let mut rest = Vec::new();
+    while !existing.exists() {
+        match (existing.file_name(), existing.parent()) {
+            (Some(name), Some(parent)) => {
+                rest.push(name.to_os_string());
+                existing = parent.to_path_buf();
             }
+            _ => return path.to_path_buf(),
         }
     }
-    Ok(())
-}
-
-fn split_lines(text: &str) -> Vec<&str> {
-    if text.is_empty() {
-        return Vec::new();
+    let mut out = existing.canonicalize().unwrap_or(existing);
+    for name in rest.into_iter().rev() {
+        out.push(name);
     }
-    let mut lines: Vec<&str> = text.split('\n').collect();
-    if lines.last() == Some(&"") {
-        lines.pop();
-    }
-    for l in &mut lines {
-        if let Some(stripped) = l.strip_suffix('\r') {
-            *l = stripped;
-        }
-    }
-    lines
-}
-
-/// Computes per-line gutter diff markers between `old_text` and `new_text` using LCS dynamic programming.
-/// Returns only the changed lines (`Added`, `Modified`, `Deleted`) in sorted order by `line_number`.
-pub fn compute_line_diff(old_text: &str, new_text: &str) -> Vec<LineDiffStatus> {
-    let old_lines = split_lines(old_text);
-    let new_lines = split_lines(new_text);
-    let n = old_lines.len();
-    let m = new_lines.len();
-
-    // Build LCS table
-    let mut dp = vec![vec![0usize; m + 1]; n + 1];
-    for i in (0..n).rev() {
-        for j in (0..m).rev() {
-            if old_lines[i] == new_lines[j] {
-                dp[i][j] = 1 + dp[i + 1][j + 1];
-            } else {
-                dp[i][j] = dp[i + 1][j].max(dp[i][j + 1]);
-            }
-        }
-    }
-
-    // Extract matched pairs (old_idx, new_idx)
-    let mut matches = Vec::new();
-    let (mut i, mut j) = (0, 0);
-    while i < n && j < m {
-        if old_lines[i] == new_lines[j] {
-            matches.push((i, j));
-            i += 1;
-            j += 1;
-        } else if dp[i + 1][j] >= dp[i][j + 1] {
-            i += 1;
-        } else {
-            j += 1;
-        }
-    }
-    // Sentinel match at end of both files
-    matches.push((n, m));
-
-    let mut markers: BTreeMap<u32, DiffMarkerKind> = BTreeMap::new();
-    let mut prev_old = 0;
-    let mut prev_new = 0;
-
-    for (match_old, match_new) in matches {
-        let old_gap = match_old - prev_old;
-        let new_gap = match_new - prev_new;
-
-        if old_gap > 0 && new_gap > 0 {
-            // Hunk has both removed and added lines -> Modified
-            for new_line in prev_new..match_new {
-                markers.insert(new_line as u32, DiffMarkerKind::Modified);
-            }
-        } else if old_gap == 0 && new_gap > 0 {
-            // Pure addition
-            for new_line in prev_new..match_new {
-                markers.insert(new_line as u32, DiffMarkerKind::Added);
-            }
-        } else if old_gap > 0 && new_gap == 0 {
-            // Pure deletion: attach Deleted marker to the line at `prev_new` (or last line)
-            let target_line = if m == 0 {
-                0
-            } else {
-                prev_new.min(m - 1) as u32
-            };
-            markers
-                .entry(target_line)
-                .or_insert(DiffMarkerKind::Deleted);
-        }
-
-        prev_old = match_old + 1;
-        prev_new = match_new + 1;
-    }
-
-    markers
-        .into_iter()
-        .map(|(line_number, status)| LineDiffStatus {
-            line_number,
-            status,
-        })
-        .collect()
+    out
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::process::Command;
 
     #[test]
-    fn test_compute_line_diff_added_modified_deleted() {
-        let old = "line 0\nline 1\nline 2\nline 3\n";
-        let new = "line 0\nline 1 modified\nline 2\nadded line A\nadded line B\n";
-        // Wait: line 1 was modified, line 3 was deleted and replaced or let's test pure cases:
-        let markers = compute_line_diff(old, new);
-        assert!(markers
-            .iter()
-            .any(|m| m.line_number == 1 && m.status == DiffMarkerKind::Modified));
-    }
-
-    #[test]
-    fn test_compute_line_diff_pure_add_and_delete() {
-        let old = "a\nb\nc\nd\n";
-        // Delete 'b' (between a and c), add 'e' after 'd'
-        let new = "a\nc\nd\ne\n";
-        let markers = compute_line_diff(old, new);
-        // Deletion of 'b' attaches a Deleted marker at line 1 ('c'), and 'e' at line 3 is Added
-        assert!(markers
-            .iter()
-            .any(|m| m.line_number == 1 && m.status == DiffMarkerKind::Deleted));
-        assert!(markers
-            .iter()
-            .any(|m| m.line_number == 3 && m.status == DiffMarkerKind::Added));
-    }
-
-    #[test]
-    fn test_gix_repository_branch_changed_files_and_gutter_diff() {
-        let temp_dir = std::env::temp_dir().join(format!(
-            "ide_levity_git_test_{}",
-            std::process::id()
-        ));
-        let _ = fs::remove_dir_all(&temp_dir);
-        fs::create_dir_all(&temp_dir).unwrap();
-
-        // Initialize a real git repository for gix to inspect
-        Command::new("git")
-            .args(["init", "-b", "main"])
-            .current_dir(&temp_dir)
-            .output()
-            .unwrap();
-        Command::new("git")
-            .args(["config", "user.email", "agent@ide-levity.dev"])
-            .current_dir(&temp_dir)
-            .output()
-            .unwrap();
-        Command::new("git")
-            .args(["config", "user.name", "IDE Levity Agent"])
-            .current_dir(&temp_dir)
-            .output()
-            .unwrap();
-
-        fs::write(temp_dir.join("main.rs"), "fn main() {\n    println!(\"v1\");\n}\n").unwrap();
-        fs::write(temp_dir.join("obsolete.txt"), "to be deleted\n").unwrap();
-
-        Command::new("git")
-            .args(["add", "."])
-            .current_dir(&temp_dir)
-            .output()
-            .unwrap();
-        Command::new("git")
-            .args(["commit", "-m", "Initial commit"])
-            .current_dir(&temp_dir)
-            .output()
-            .unwrap();
-
-        // Now modify main.rs, delete obsolete.txt, and add new_feature.rs
-        fs::write(
-            temp_dir.join("main.rs"),
-            "fn main() {\n    println!(\"v2\");\n    println!(\"added\");\n}\n",
-        )
-        .unwrap();
-        fs::remove_file(temp_dir.join("obsolete.txt")).unwrap();
-        fs::write(temp_dir.join("new_feature.rs"), "pub fn feature() {}\n").unwrap();
-
-        let repo = GitRepository::open(&temp_dir).unwrap();
-        assert_eq!(repo.current_branch().unwrap(), "main");
-
-        let changed = repo.changed_files().unwrap();
-        assert_eq!(
-            changed,
-            vec![
-                GitFileStatus {
-                    path: "main.rs".to_string(),
-                    kind: FileChangeKind::Modified,
-                },
-                GitFileStatus {
-                    path: "new_feature.rs".to_string(),
-                    kind: FileChangeKind::Added,
-                },
-                GitFileStatus {
-                    path: "obsolete.txt".to_string(),
-                    kind: FileChangeKind::Deleted,
-                },
-            ]
-        );
-
-        let diff_markers = repo
-            .diff_buffer_lines(
-                temp_dir.join("main.rs"),
-                "fn main() {\n    println!(\"v2\");\n    println!(\"added\");\n}\n",
-            )
-            .unwrap();
-        assert_eq!(diff_markers.len(), 2);
-        assert_eq!(diff_markers[0].line_number, 1);
-        assert_eq!(diff_markers[0].status, DiffMarkerKind::Modified);
-        assert_eq!(diff_markers[1].line_number, 2);
-        assert_eq!(diff_markers[1].status, DiffMarkerKind::Modified);
-
-        let _ = fs::remove_dir_all(&temp_dir);
+    fn head_cache_is_lru_and_invalidated_by_head_changes() {
+        let a = ObjectId::null(gix::hash::Kind::Sha1);
+        let b = ObjectId::from_hex(b"1111111111111111111111111111111111111111").unwrap();
+        let mut cache = HeadBlobCache::default();
+        assert!(cache.get(Some(a), "x").is_none());
+        cache.put(Some(a), "x".into(), Some(Arc::from("content")));
+        assert_eq!(cache.get(Some(a), "x").unwrap().as_deref(), Some("content"));
+        assert!(cache.get(Some(b), "x").is_none(), "HEAD moved");
+        for i in 0..HEAD_CACHE_CAPACITY + 5 {
+            cache.put(Some(b), format!("f{i}"), None);
+        }
+        assert_eq!(cache.entries.len(), HEAD_CACHE_CAPACITY);
+        assert!(cache.get(Some(b), "f0").is_none(), "oldest evicted");
+        assert!(cache.get(Some(b), "f36").is_some());
     }
 }

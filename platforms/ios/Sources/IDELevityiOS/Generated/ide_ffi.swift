@@ -431,6 +431,22 @@ fileprivate struct FfiConverterUInt32: FfiConverterPrimitive {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterInt32: FfiConverterPrimitive {
+    typealias FfiType = Int32
+    typealias SwiftType = Int32
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Int32 {
+        return try lift(readInt(&buf))
+    }
+
+    public static func write(_ value: Int32, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterUInt64: FfiConverterPrimitive {
     typealias FfiType = UInt64
     typealias SwiftType = UInt64
@@ -521,13 +537,51 @@ public protocol FfiWorkspaceProtocol : AnyObject {
     
     func activeViewport() throws  -> ViewportViewModel
     
+    /**
+     * Text to copy (selection, or current line when nothing is selected).
+     */
+    func clipboardText(bufferId: UInt64) throws  -> ClipboardPayload
+    
+    func closeBuffer(bufferId: UInt64) throws  -> ViewportViewModel
+    
+    func createDir(path: String) throws  -> String
+    
+    func createFile(path: String) throws  -> ViewportViewModel
+    
     func currentGitBranch()  -> String?
+    
+    func deletePath(path: String) throws 
     
     func dispatch(action: EditorAction) throws  -> ViewportViewModel
     
+    func hasUnsavedChanges()  -> Bool
+    
+    /**
+     * Lists one directory level (folders first). Pass an empty string for the root.
+     */
+    func listDirectory(dir: String) throws  -> [DirEntryInfo]
+    
     func listWorkspaceFiles()  -> [String]
     
+    func newUntitledBuffer() throws  -> ViewportViewModel
+    
+    /**
+     * Open tabs in order.
+     */
+    func openBuffers()  -> [OpenBufferInfo]
+    
     func rejectAgentTask(taskId: UInt64, bufferId: UInt64) throws  -> ViewportViewModel
+    
+    func renamePath(from: String, to: String) throws  -> String
+    
+    /**
+     * Absolute workspace root folder.
+     */
+    func rootDir()  -> String
+    
+    func saveBufferAs(bufferId: UInt64, path: String) throws  -> ViewportViewModel
+    
+    func setActiveBuffer(bufferId: UInt64) throws  -> ViewportViewModel
     
 }
 
@@ -608,6 +662,41 @@ open func activeViewport()throws  -> ViewportViewModel {
 })
 }
     
+    /**
+     * Text to copy (selection, or current line when nothing is selected).
+     */
+open func clipboardText(bufferId: UInt64)throws  -> ClipboardPayload {
+    return try  FfiConverterTypeClipboardPayload.lift(try rustCallWithError(FfiConverterTypeFfiError.lift) {
+    uniffi_ide_ffi_fn_method_ffiworkspace_clipboard_text(self.uniffiClonePointer(),
+        FfiConverterUInt64.lower(bufferId),$0
+    )
+})
+}
+    
+open func closeBuffer(bufferId: UInt64)throws  -> ViewportViewModel {
+    return try  FfiConverterTypeViewportViewModel.lift(try rustCallWithError(FfiConverterTypeFfiError.lift) {
+    uniffi_ide_ffi_fn_method_ffiworkspace_close_buffer(self.uniffiClonePointer(),
+        FfiConverterUInt64.lower(bufferId),$0
+    )
+})
+}
+    
+open func createDir(path: String)throws  -> String {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFfiError.lift) {
+    uniffi_ide_ffi_fn_method_ffiworkspace_create_dir(self.uniffiClonePointer(),
+        FfiConverterString.lower(path),$0
+    )
+})
+}
+    
+open func createFile(path: String)throws  -> ViewportViewModel {
+    return try  FfiConverterTypeViewportViewModel.lift(try rustCallWithError(FfiConverterTypeFfiError.lift) {
+    uniffi_ide_ffi_fn_method_ffiworkspace_create_file(self.uniffiClonePointer(),
+        FfiConverterString.lower(path),$0
+    )
+})
+}
+    
 open func currentGitBranch() -> String? {
     return try!  FfiConverterOptionString.lift(try! rustCall() {
     uniffi_ide_ffi_fn_method_ffiworkspace_current_git_branch(self.uniffiClonePointer(),$0
@@ -615,10 +704,35 @@ open func currentGitBranch() -> String? {
 })
 }
     
+open func deletePath(path: String)throws  {try rustCallWithError(FfiConverterTypeFfiError.lift) {
+    uniffi_ide_ffi_fn_method_ffiworkspace_delete_path(self.uniffiClonePointer(),
+        FfiConverterString.lower(path),$0
+    )
+}
+}
+    
 open func dispatch(action: EditorAction)throws  -> ViewportViewModel {
     return try  FfiConverterTypeViewportViewModel.lift(try rustCallWithError(FfiConverterTypeFfiError.lift) {
     uniffi_ide_ffi_fn_method_ffiworkspace_dispatch(self.uniffiClonePointer(),
         FfiConverterTypeEditorAction.lower(action),$0
+    )
+})
+}
+    
+open func hasUnsavedChanges() -> Bool {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+    uniffi_ide_ffi_fn_method_ffiworkspace_has_unsaved_changes(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+    /**
+     * Lists one directory level (folders first). Pass an empty string for the root.
+     */
+open func listDirectory(dir: String)throws  -> [DirEntryInfo] {
+    return try  FfiConverterSequenceTypeDirEntryInfo.lift(try rustCallWithError(FfiConverterTypeFfiError.lift) {
+    uniffi_ide_ffi_fn_method_ffiworkspace_list_directory(self.uniffiClonePointer(),
+        FfiConverterString.lower(dir),$0
     )
 })
 }
@@ -630,10 +744,63 @@ open func listWorkspaceFiles() -> [String] {
 })
 }
     
+open func newUntitledBuffer()throws  -> ViewportViewModel {
+    return try  FfiConverterTypeViewportViewModel.lift(try rustCallWithError(FfiConverterTypeFfiError.lift) {
+    uniffi_ide_ffi_fn_method_ffiworkspace_new_untitled_buffer(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+    /**
+     * Open tabs in order.
+     */
+open func openBuffers() -> [OpenBufferInfo] {
+    return try!  FfiConverterSequenceTypeOpenBufferInfo.lift(try! rustCall() {
+    uniffi_ide_ffi_fn_method_ffiworkspace_open_buffers(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
 open func rejectAgentTask(taskId: UInt64, bufferId: UInt64)throws  -> ViewportViewModel {
     return try  FfiConverterTypeViewportViewModel.lift(try rustCallWithError(FfiConverterTypeFfiError.lift) {
     uniffi_ide_ffi_fn_method_ffiworkspace_reject_agent_task(self.uniffiClonePointer(),
         FfiConverterUInt64.lower(taskId),
+        FfiConverterUInt64.lower(bufferId),$0
+    )
+})
+}
+    
+open func renamePath(from: String, to: String)throws  -> String {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFfiError.lift) {
+    uniffi_ide_ffi_fn_method_ffiworkspace_rename_path(self.uniffiClonePointer(),
+        FfiConverterString.lower(from),
+        FfiConverterString.lower(to),$0
+    )
+})
+}
+    
+    /**
+     * Absolute workspace root folder.
+     */
+open func rootDir() -> String {
+    return try!  FfiConverterString.lift(try! rustCall() {
+    uniffi_ide_ffi_fn_method_ffiworkspace_root_dir(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+open func saveBufferAs(bufferId: UInt64, path: String)throws  -> ViewportViewModel {
+    return try  FfiConverterTypeViewportViewModel.lift(try rustCallWithError(FfiConverterTypeFfiError.lift) {
+    uniffi_ide_ffi_fn_method_ffiworkspace_save_buffer_as(self.uniffiClonePointer(),
+        FfiConverterUInt64.lower(bufferId),
+        FfiConverterString.lower(path),$0
+    )
+})
+}
+    
+open func setActiveBuffer(bufferId: UInt64)throws  -> ViewportViewModel {
+    return try  FfiConverterTypeViewportViewModel.lift(try rustCallWithError(FfiConverterTypeFfiError.lift) {
+    uniffi_ide_ffi_fn_method_ffiworkspace_set_active_buffer(self.uniffiClonePointer(),
         FfiConverterUInt64.lower(bufferId),$0
     )
 })
@@ -784,6 +951,81 @@ public func FfiConverterTypeAgentTaskStatus_lift(_ buf: RustBuffer) throws -> Ag
 #endif
 public func FfiConverterTypeAgentTaskStatus_lower(_ value: AgentTaskStatus) -> RustBuffer {
     return FfiConverterTypeAgentTaskStatus.lower(value)
+}
+
+
+/**
+ * Clipboard payload for Copy/Cut.
+ */
+public struct ClipboardPayload {
+    public var text: String
+    /**
+     * True when nothing was selected and the whole line(s) were copied.
+     */
+    public var isWholeLine: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(text: String, 
+        /**
+         * True when nothing was selected and the whole line(s) were copied.
+         */isWholeLine: Bool) {
+        self.text = text
+        self.isWholeLine = isWholeLine
+    }
+}
+
+
+
+extension ClipboardPayload: Equatable, Hashable {
+    public static func ==(lhs: ClipboardPayload, rhs: ClipboardPayload) -> Bool {
+        if lhs.text != rhs.text {
+            return false
+        }
+        if lhs.isWholeLine != rhs.isWholeLine {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(text)
+        hasher.combine(isWholeLine)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClipboardPayload: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClipboardPayload {
+        return
+            try ClipboardPayload(
+                text: FfiConverterString.read(from: &buf), 
+                isWholeLine: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClipboardPayload, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.text, into: &buf)
+        FfiConverterBool.write(value.isWholeLine, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClipboardPayload_lift(_ buf: RustBuffer) throws -> ClipboardPayload {
+    return try FfiConverterTypeClipboardPayload.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClipboardPayload_lower(_ value: ClipboardPayload) -> RustBuffer {
+    return FfiConverterTypeClipboardPayload.lower(value)
 }
 
 
@@ -958,6 +1200,91 @@ public func FfiConverterTypeDiagnosticItem_lower(_ value: DiagnosticItem) -> Rus
 
 
 /**
+ * One explorer entry (a single directory level).
+ */
+public struct DirEntryInfo {
+    public var name: String
+    public var path: String
+    public var isDir: Bool
+    public var isIgnored: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(name: String, path: String, isDir: Bool, isIgnored: Bool) {
+        self.name = name
+        self.path = path
+        self.isDir = isDir
+        self.isIgnored = isIgnored
+    }
+}
+
+
+
+extension DirEntryInfo: Equatable, Hashable {
+    public static func ==(lhs: DirEntryInfo, rhs: DirEntryInfo) -> Bool {
+        if lhs.name != rhs.name {
+            return false
+        }
+        if lhs.path != rhs.path {
+            return false
+        }
+        if lhs.isDir != rhs.isDir {
+            return false
+        }
+        if lhs.isIgnored != rhs.isIgnored {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(name)
+        hasher.combine(path)
+        hasher.combine(isDir)
+        hasher.combine(isIgnored)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeDirEntryInfo: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DirEntryInfo {
+        return
+            try DirEntryInfo(
+                name: FfiConverterString.read(from: &buf), 
+                path: FfiConverterString.read(from: &buf), 
+                isDir: FfiConverterBool.read(from: &buf), 
+                isIgnored: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: DirEntryInfo, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterString.write(value.path, into: &buf)
+        FfiConverterBool.write(value.isDir, into: &buf)
+        FfiConverterBool.write(value.isIgnored, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDirEntryInfo_lift(_ buf: RustBuffer) throws -> DirEntryInfo {
+    return try FfiConverterTypeDirEntryInfo.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDirEntryInfo_lower(_ value: DirEntryInfo) -> RustBuffer {
+    return FfiConverterTypeDirEntryInfo.lower(value)
+}
+
+
+/**
  * Syntax highlight span within a `RenderedLine`.
  */
 public struct HighlightSpan {
@@ -1108,6 +1435,97 @@ public func FfiConverterTypeLineDiffStatus_lift(_ buf: RustBuffer) throws -> Lin
 #endif
 public func FfiConverterTypeLineDiffStatus_lower(_ value: LineDiffStatus) -> RustBuffer {
     return FfiConverterTypeLineDiffStatus.lower(value)
+}
+
+
+/**
+ * Open editor tab information.
+ */
+public struct OpenBufferInfo {
+    public var bufferId: UInt64
+    /**
+     * Absolute path, or `None` for untitled buffers.
+     */
+    public var path: String?
+    public var title: String
+    public var isDirty: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(bufferId: UInt64, 
+        /**
+         * Absolute path, or `None` for untitled buffers.
+         */path: String?, title: String, isDirty: Bool) {
+        self.bufferId = bufferId
+        self.path = path
+        self.title = title
+        self.isDirty = isDirty
+    }
+}
+
+
+
+extension OpenBufferInfo: Equatable, Hashable {
+    public static func ==(lhs: OpenBufferInfo, rhs: OpenBufferInfo) -> Bool {
+        if lhs.bufferId != rhs.bufferId {
+            return false
+        }
+        if lhs.path != rhs.path {
+            return false
+        }
+        if lhs.title != rhs.title {
+            return false
+        }
+        if lhs.isDirty != rhs.isDirty {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(bufferId)
+        hasher.combine(path)
+        hasher.combine(title)
+        hasher.combine(isDirty)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeOpenBufferInfo: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> OpenBufferInfo {
+        return
+            try OpenBufferInfo(
+                bufferId: FfiConverterUInt64.read(from: &buf), 
+                path: FfiConverterOptionString.read(from: &buf), 
+                title: FfiConverterString.read(from: &buf), 
+                isDirty: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: OpenBufferInfo, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.bufferId, into: &buf)
+        FfiConverterOptionString.write(value.path, into: &buf)
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterBool.write(value.isDirty, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeOpenBufferInfo_lift(_ buf: RustBuffer) throws -> OpenBufferInfo {
+    return try FfiConverterTypeOpenBufferInfo.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeOpenBufferInfo_lower(_ value: OpenBufferInfo) -> RustBuffer {
+    return FfiConverterTypeOpenBufferInfo.lower(value)
 }
 
 
@@ -1429,6 +1847,8 @@ public enum CursorDirection {
     case lineEnd
     case documentStart
     case documentEnd
+    case wordLeft
+    case wordRight
 }
 
 
@@ -1457,6 +1877,10 @@ public struct FfiConverterTypeCursorDirection: FfiConverterRustBuffer {
         case 7: return .documentStart
         
         case 8: return .documentEnd
+        
+        case 9: return .wordLeft
+        
+        case 10: return .wordRight
         
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -1496,6 +1920,14 @@ public struct FfiConverterTypeCursorDirection: FfiConverterRustBuffer {
         
         case .documentEnd:
             writeInt(&buf, Int32(8))
+        
+        
+        case .wordLeft:
+            writeInt(&buf, Int32(9))
+        
+        
+        case .wordRight:
+            writeInt(&buf, Int32(10))
         
         }
     }
@@ -1716,6 +2148,28 @@ public enum EditorAction {
     )
     case submitAgentPrompt(prompt: String
     )
+    case insertNewline(bufferId: UInt64
+    )
+    case indent(bufferId: UInt64
+    )
+    case outdent(bufferId: UInt64
+    )
+    case toggleLineComment(bufferId: UInt64
+    )
+    case selectAll(bufferId: UInt64
+    )
+    case addNextOccurrence(bufferId: UInt64
+    )
+    case deleteWordBackward(bufferId: UInt64
+    )
+    case deleteWordForward(bufferId: UInt64
+    )
+    case deleteSelectionOrLine(bufferId: UInt64
+    )
+    case movePage(bufferId: UInt64, pages: Int32, select: Bool
+    )
+    case collapseCursors(bufferId: UInt64
+    )
 }
 
 
@@ -1763,6 +2217,39 @@ public struct FfiConverterTypeEditorAction: FfiConverterRustBuffer {
         )
         
         case 12: return .submitAgentPrompt(prompt: try FfiConverterString.read(from: &buf)
+        )
+        
+        case 13: return .insertNewline(bufferId: try FfiConverterUInt64.read(from: &buf)
+        )
+        
+        case 14: return .indent(bufferId: try FfiConverterUInt64.read(from: &buf)
+        )
+        
+        case 15: return .outdent(bufferId: try FfiConverterUInt64.read(from: &buf)
+        )
+        
+        case 16: return .toggleLineComment(bufferId: try FfiConverterUInt64.read(from: &buf)
+        )
+        
+        case 17: return .selectAll(bufferId: try FfiConverterUInt64.read(from: &buf)
+        )
+        
+        case 18: return .addNextOccurrence(bufferId: try FfiConverterUInt64.read(from: &buf)
+        )
+        
+        case 19: return .deleteWordBackward(bufferId: try FfiConverterUInt64.read(from: &buf)
+        )
+        
+        case 20: return .deleteWordForward(bufferId: try FfiConverterUInt64.read(from: &buf)
+        )
+        
+        case 21: return .deleteSelectionOrLine(bufferId: try FfiConverterUInt64.read(from: &buf)
+        )
+        
+        case 22: return .movePage(bufferId: try FfiConverterUInt64.read(from: &buf), pages: try FfiConverterInt32.read(from: &buf), select: try FfiConverterBool.read(from: &buf)
+        )
+        
+        case 23: return .collapseCursors(bufferId: try FfiConverterUInt64.read(from: &buf)
         )
         
         default: throw UniffiInternalError.unexpectedEnumCase
@@ -1839,6 +2326,63 @@ public struct FfiConverterTypeEditorAction: FfiConverterRustBuffer {
         case let .submitAgentPrompt(prompt):
             writeInt(&buf, Int32(12))
             FfiConverterString.write(prompt, into: &buf)
+            
+        
+        case let .insertNewline(bufferId):
+            writeInt(&buf, Int32(13))
+            FfiConverterUInt64.write(bufferId, into: &buf)
+            
+        
+        case let .indent(bufferId):
+            writeInt(&buf, Int32(14))
+            FfiConverterUInt64.write(bufferId, into: &buf)
+            
+        
+        case let .outdent(bufferId):
+            writeInt(&buf, Int32(15))
+            FfiConverterUInt64.write(bufferId, into: &buf)
+            
+        
+        case let .toggleLineComment(bufferId):
+            writeInt(&buf, Int32(16))
+            FfiConverterUInt64.write(bufferId, into: &buf)
+            
+        
+        case let .selectAll(bufferId):
+            writeInt(&buf, Int32(17))
+            FfiConverterUInt64.write(bufferId, into: &buf)
+            
+        
+        case let .addNextOccurrence(bufferId):
+            writeInt(&buf, Int32(18))
+            FfiConverterUInt64.write(bufferId, into: &buf)
+            
+        
+        case let .deleteWordBackward(bufferId):
+            writeInt(&buf, Int32(19))
+            FfiConverterUInt64.write(bufferId, into: &buf)
+            
+        
+        case let .deleteWordForward(bufferId):
+            writeInt(&buf, Int32(20))
+            FfiConverterUInt64.write(bufferId, into: &buf)
+            
+        
+        case let .deleteSelectionOrLine(bufferId):
+            writeInt(&buf, Int32(21))
+            FfiConverterUInt64.write(bufferId, into: &buf)
+            
+        
+        case let .movePage(bufferId,pages,select):
+            writeInt(&buf, Int32(22))
+            FfiConverterUInt64.write(bufferId, into: &buf)
+            FfiConverterInt32.write(pages, into: &buf)
+            FfiConverterBool.write(select, into: &buf)
+            
+        
+        case let .collapseCursors(bufferId):
+            writeInt(&buf, Int32(23))
+            FfiConverterUInt64.write(bufferId, into: &buf)
             
         }
     }
@@ -2047,6 +2591,31 @@ fileprivate struct FfiConverterSequenceTypeDiagnosticItem: FfiConverterRustBuffe
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeDirEntryInfo: FfiConverterRustBuffer {
+    typealias SwiftType = [DirEntryInfo]
+
+    public static func write(_ value: [DirEntryInfo], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeDirEntryInfo.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [DirEntryInfo] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [DirEntryInfo]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeDirEntryInfo.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeHighlightSpan: FfiConverterRustBuffer {
     typealias SwiftType = [HighlightSpan]
 
@@ -2089,6 +2658,31 @@ fileprivate struct FfiConverterSequenceTypeLineDiffStatus: FfiConverterRustBuffe
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeLineDiffStatus.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeOpenBufferInfo: FfiConverterRustBuffer {
+    typealias SwiftType = [OpenBufferInfo]
+
+    public static func write(_ value: [OpenBufferInfo], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeOpenBufferInfo.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [OpenBufferInfo] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [OpenBufferInfo]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeOpenBufferInfo.read(from: &buf))
         }
         return seq
     }
@@ -2165,16 +2759,55 @@ private var initializationResult: InitializationResult = {
     if (uniffi_ide_ffi_checksum_method_ffiworkspace_active_viewport() != 30272) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_ide_ffi_checksum_method_ffiworkspace_clipboard_text() != 51653) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_ide_ffi_checksum_method_ffiworkspace_close_buffer() != 50360) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_ide_ffi_checksum_method_ffiworkspace_create_dir() != 20944) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_ide_ffi_checksum_method_ffiworkspace_create_file() != 37957) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_ide_ffi_checksum_method_ffiworkspace_current_git_branch() != 37417) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_ide_ffi_checksum_method_ffiworkspace_delete_path() != 33760) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_ide_ffi_checksum_method_ffiworkspace_dispatch() != 3710) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_ide_ffi_checksum_method_ffiworkspace_has_unsaved_changes() != 47155) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_ide_ffi_checksum_method_ffiworkspace_list_directory() != 38763) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_ide_ffi_checksum_method_ffiworkspace_list_workspace_files() != 30643) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_ide_ffi_checksum_method_ffiworkspace_new_untitled_buffer() != 47873) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_ide_ffi_checksum_method_ffiworkspace_open_buffers() != 1858) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_ide_ffi_checksum_method_ffiworkspace_reject_agent_task() != 19006) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_ide_ffi_checksum_method_ffiworkspace_rename_path() != 19344) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_ide_ffi_checksum_method_ffiworkspace_root_dir() != 22166) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_ide_ffi_checksum_method_ffiworkspace_save_buffer_as() != 30603) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_ide_ffi_checksum_method_ffiworkspace_set_active_buffer() != 31256) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_ide_ffi_checksum_constructor_ffiworkspace_new() != 28255) {

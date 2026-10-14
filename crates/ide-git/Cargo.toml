@@ -2,8 +2,12 @@
 name = "ide-git"
 version = "0.1.0"
 edition = "2021"
+description = "Git engine for IDE Levity (status, staging, commits, diffs, branches) built on gix"
 
 [dependencies]
-gix = { version = "0.66", default-features = false, features = ["max-performance-safe"] }
+gix = { version = "0.66", default-features = false, features = ["max-performance-safe", "status", "index", "blob-diff", "revision", "dirwalk", "excludes", "attributes", "worktree-mutation"] }
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"
+
+[dev-dependencies]
+tempfile = "3"

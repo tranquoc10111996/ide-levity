@@ -54,23 +54,41 @@ pub fn main() -> iced::Result {
     let root = target_path.to_string();
     let start_in_agent_view = args.iter().any(|a| a == "--agent-view");
     let start_with_palette = args.iter().any(|a| a == "--palette");
+    let start_in_search = args.iter().any(|a| a == "--search-view");
+    let start_in_git = args.iter().any(|a| a == "--git-view");
     iced::application(
         IdeDesktopApp::title,
         IdeDesktopApp::update,
         IdeDesktopApp::view,
     )
     .subscription(IdeDesktopApp::subscription)
+    .font(ide_desktop::theme::FONT_BYTES[0])
+    .font(ide_desktop::theme::FONT_BYTES[1])
     .theme(|_| Theme::Dark)
     .window_size((1360.0, 860.0))
     .run_with(move || {
         let mut app = IdeDesktopApp::new(&root);
         if start_in_agent_view {
             let _ = app.update(DesktopMessage::AgentPromptChanged(
-                "120 -> 240".to_string(),
+                "0.1.0 -> 1.0.0".to_string(),
             ));
             let _ = app.update(DesktopMessage::SubmitAgentPrompt);
             let _ = app.update(DesktopMessage::SwitchViewMode(
                 DesktopViewMode::AgentManager,
+            ));
+        }
+        if start_in_search {
+            let _ = app.update(DesktopMessage::SelectSidebarTab(
+                ide_desktop::SidebarTab::Search,
+            ));
+            let _ = app.update(DesktopMessage::WorkspaceSearchQueryChanged(
+                "IdeWorkspace".to_string(),
+            ));
+            let _ = app.update(DesktopMessage::RunWorkspaceSearch);
+        }
+        if start_in_git {
+            let _ = app.update(DesktopMessage::SelectSidebarTab(
+                ide_desktop::SidebarTab::SourceControl,
             ));
         }
         if start_with_palette {

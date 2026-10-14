@@ -276,9 +276,34 @@ RustBuffer uniffi_ide_ffi_fn_method_ffiworkspace_accept_agent_task(void*_Nonnull
 RustBuffer uniffi_ide_ffi_fn_method_ffiworkspace_active_viewport(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_IDE_FFI_FN_METHOD_FFIWORKSPACE_CLIPBOARD_TEXT
+#define UNIFFI_FFIDEF_UNIFFI_IDE_FFI_FN_METHOD_FFIWORKSPACE_CLIPBOARD_TEXT
+RustBuffer uniffi_ide_ffi_fn_method_ffiworkspace_clipboard_text(void*_Nonnull ptr, uint64_t buffer_id, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_IDE_FFI_FN_METHOD_FFIWORKSPACE_CLOSE_BUFFER
+#define UNIFFI_FFIDEF_UNIFFI_IDE_FFI_FN_METHOD_FFIWORKSPACE_CLOSE_BUFFER
+RustBuffer uniffi_ide_ffi_fn_method_ffiworkspace_close_buffer(void*_Nonnull ptr, uint64_t buffer_id, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_IDE_FFI_FN_METHOD_FFIWORKSPACE_CREATE_DIR
+#define UNIFFI_FFIDEF_UNIFFI_IDE_FFI_FN_METHOD_FFIWORKSPACE_CREATE_DIR
+RustBuffer uniffi_ide_ffi_fn_method_ffiworkspace_create_dir(void*_Nonnull ptr, RustBuffer path, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_IDE_FFI_FN_METHOD_FFIWORKSPACE_CREATE_FILE
+#define UNIFFI_FFIDEF_UNIFFI_IDE_FFI_FN_METHOD_FFIWORKSPACE_CREATE_FILE
+RustBuffer uniffi_ide_ffi_fn_method_ffiworkspace_create_file(void*_Nonnull ptr, RustBuffer path, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_IDE_FFI_FN_METHOD_FFIWORKSPACE_CURRENT_GIT_BRANCH
 #define UNIFFI_FFIDEF_UNIFFI_IDE_FFI_FN_METHOD_FFIWORKSPACE_CURRENT_GIT_BRANCH
 RustBuffer uniffi_ide_ffi_fn_method_ffiworkspace_current_git_branch(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_IDE_FFI_FN_METHOD_FFIWORKSPACE_DELETE_PATH
+#define UNIFFI_FFIDEF_UNIFFI_IDE_FFI_FN_METHOD_FFIWORKSPACE_DELETE_PATH
+void uniffi_ide_ffi_fn_method_ffiworkspace_delete_path(void*_Nonnull ptr, RustBuffer path, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_IDE_FFI_FN_METHOD_FFIWORKSPACE_DISPATCH
@@ -286,14 +311,54 @@ RustBuffer uniffi_ide_ffi_fn_method_ffiworkspace_current_git_branch(void*_Nonnul
 RustBuffer uniffi_ide_ffi_fn_method_ffiworkspace_dispatch(void*_Nonnull ptr, RustBuffer action, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_IDE_FFI_FN_METHOD_FFIWORKSPACE_HAS_UNSAVED_CHANGES
+#define UNIFFI_FFIDEF_UNIFFI_IDE_FFI_FN_METHOD_FFIWORKSPACE_HAS_UNSAVED_CHANGES
+int8_t uniffi_ide_ffi_fn_method_ffiworkspace_has_unsaved_changes(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_IDE_FFI_FN_METHOD_FFIWORKSPACE_LIST_DIRECTORY
+#define UNIFFI_FFIDEF_UNIFFI_IDE_FFI_FN_METHOD_FFIWORKSPACE_LIST_DIRECTORY
+RustBuffer uniffi_ide_ffi_fn_method_ffiworkspace_list_directory(void*_Nonnull ptr, RustBuffer dir, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_IDE_FFI_FN_METHOD_FFIWORKSPACE_LIST_WORKSPACE_FILES
 #define UNIFFI_FFIDEF_UNIFFI_IDE_FFI_FN_METHOD_FFIWORKSPACE_LIST_WORKSPACE_FILES
 RustBuffer uniffi_ide_ffi_fn_method_ffiworkspace_list_workspace_files(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_IDE_FFI_FN_METHOD_FFIWORKSPACE_NEW_UNTITLED_BUFFER
+#define UNIFFI_FFIDEF_UNIFFI_IDE_FFI_FN_METHOD_FFIWORKSPACE_NEW_UNTITLED_BUFFER
+RustBuffer uniffi_ide_ffi_fn_method_ffiworkspace_new_untitled_buffer(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_IDE_FFI_FN_METHOD_FFIWORKSPACE_OPEN_BUFFERS
+#define UNIFFI_FFIDEF_UNIFFI_IDE_FFI_FN_METHOD_FFIWORKSPACE_OPEN_BUFFERS
+RustBuffer uniffi_ide_ffi_fn_method_ffiworkspace_open_buffers(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_IDE_FFI_FN_METHOD_FFIWORKSPACE_REJECT_AGENT_TASK
 #define UNIFFI_FFIDEF_UNIFFI_IDE_FFI_FN_METHOD_FFIWORKSPACE_REJECT_AGENT_TASK
 RustBuffer uniffi_ide_ffi_fn_method_ffiworkspace_reject_agent_task(void*_Nonnull ptr, uint64_t task_id, uint64_t buffer_id, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_IDE_FFI_FN_METHOD_FFIWORKSPACE_RENAME_PATH
+#define UNIFFI_FFIDEF_UNIFFI_IDE_FFI_FN_METHOD_FFIWORKSPACE_RENAME_PATH
+RustBuffer uniffi_ide_ffi_fn_method_ffiworkspace_rename_path(void*_Nonnull ptr, RustBuffer from, RustBuffer to, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_IDE_FFI_FN_METHOD_FFIWORKSPACE_ROOT_DIR
+#define UNIFFI_FFIDEF_UNIFFI_IDE_FFI_FN_METHOD_FFIWORKSPACE_ROOT_DIR
+RustBuffer uniffi_ide_ffi_fn_method_ffiworkspace_root_dir(void*_Nonnull ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_IDE_FFI_FN_METHOD_FFIWORKSPACE_SAVE_BUFFER_AS
+#define UNIFFI_FFIDEF_UNIFFI_IDE_FFI_FN_METHOD_FFIWORKSPACE_SAVE_BUFFER_AS
+RustBuffer uniffi_ide_ffi_fn_method_ffiworkspace_save_buffer_as(void*_Nonnull ptr, uint64_t buffer_id, RustBuffer path, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_IDE_FFI_FN_METHOD_FFIWORKSPACE_SET_ACTIVE_BUFFER
+#define UNIFFI_FFIDEF_UNIFFI_IDE_FFI_FN_METHOD_FFIWORKSPACE_SET_ACTIVE_BUFFER
+RustBuffer uniffi_ide_ffi_fn_method_ffiworkspace_set_active_buffer(void*_Nonnull ptr, uint64_t buffer_id, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_FFI_IDE_FFI_RUSTBUFFER_ALLOC
@@ -588,9 +653,39 @@ uint16_t uniffi_ide_ffi_checksum_method_ffiworkspace_active_viewport(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_IDE_FFI_CHECKSUM_METHOD_FFIWORKSPACE_CLIPBOARD_TEXT
+#define UNIFFI_FFIDEF_UNIFFI_IDE_FFI_CHECKSUM_METHOD_FFIWORKSPACE_CLIPBOARD_TEXT
+uint16_t uniffi_ide_ffi_checksum_method_ffiworkspace_clipboard_text(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_IDE_FFI_CHECKSUM_METHOD_FFIWORKSPACE_CLOSE_BUFFER
+#define UNIFFI_FFIDEF_UNIFFI_IDE_FFI_CHECKSUM_METHOD_FFIWORKSPACE_CLOSE_BUFFER
+uint16_t uniffi_ide_ffi_checksum_method_ffiworkspace_close_buffer(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_IDE_FFI_CHECKSUM_METHOD_FFIWORKSPACE_CREATE_DIR
+#define UNIFFI_FFIDEF_UNIFFI_IDE_FFI_CHECKSUM_METHOD_FFIWORKSPACE_CREATE_DIR
+uint16_t uniffi_ide_ffi_checksum_method_ffiworkspace_create_dir(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_IDE_FFI_CHECKSUM_METHOD_FFIWORKSPACE_CREATE_FILE
+#define UNIFFI_FFIDEF_UNIFFI_IDE_FFI_CHECKSUM_METHOD_FFIWORKSPACE_CREATE_FILE
+uint16_t uniffi_ide_ffi_checksum_method_ffiworkspace_create_file(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_IDE_FFI_CHECKSUM_METHOD_FFIWORKSPACE_CURRENT_GIT_BRANCH
 #define UNIFFI_FFIDEF_UNIFFI_IDE_FFI_CHECKSUM_METHOD_FFIWORKSPACE_CURRENT_GIT_BRANCH
 uint16_t uniffi_ide_ffi_checksum_method_ffiworkspace_current_git_branch(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_IDE_FFI_CHECKSUM_METHOD_FFIWORKSPACE_DELETE_PATH
+#define UNIFFI_FFIDEF_UNIFFI_IDE_FFI_CHECKSUM_METHOD_FFIWORKSPACE_DELETE_PATH
+uint16_t uniffi_ide_ffi_checksum_method_ffiworkspace_delete_path(void
     
 );
 #endif
@@ -600,15 +695,63 @@ uint16_t uniffi_ide_ffi_checksum_method_ffiworkspace_dispatch(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_IDE_FFI_CHECKSUM_METHOD_FFIWORKSPACE_HAS_UNSAVED_CHANGES
+#define UNIFFI_FFIDEF_UNIFFI_IDE_FFI_CHECKSUM_METHOD_FFIWORKSPACE_HAS_UNSAVED_CHANGES
+uint16_t uniffi_ide_ffi_checksum_method_ffiworkspace_has_unsaved_changes(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_IDE_FFI_CHECKSUM_METHOD_FFIWORKSPACE_LIST_DIRECTORY
+#define UNIFFI_FFIDEF_UNIFFI_IDE_FFI_CHECKSUM_METHOD_FFIWORKSPACE_LIST_DIRECTORY
+uint16_t uniffi_ide_ffi_checksum_method_ffiworkspace_list_directory(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_IDE_FFI_CHECKSUM_METHOD_FFIWORKSPACE_LIST_WORKSPACE_FILES
 #define UNIFFI_FFIDEF_UNIFFI_IDE_FFI_CHECKSUM_METHOD_FFIWORKSPACE_LIST_WORKSPACE_FILES
 uint16_t uniffi_ide_ffi_checksum_method_ffiworkspace_list_workspace_files(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_IDE_FFI_CHECKSUM_METHOD_FFIWORKSPACE_NEW_UNTITLED_BUFFER
+#define UNIFFI_FFIDEF_UNIFFI_IDE_FFI_CHECKSUM_METHOD_FFIWORKSPACE_NEW_UNTITLED_BUFFER
+uint16_t uniffi_ide_ffi_checksum_method_ffiworkspace_new_untitled_buffer(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_IDE_FFI_CHECKSUM_METHOD_FFIWORKSPACE_OPEN_BUFFERS
+#define UNIFFI_FFIDEF_UNIFFI_IDE_FFI_CHECKSUM_METHOD_FFIWORKSPACE_OPEN_BUFFERS
+uint16_t uniffi_ide_ffi_checksum_method_ffiworkspace_open_buffers(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_IDE_FFI_CHECKSUM_METHOD_FFIWORKSPACE_REJECT_AGENT_TASK
 #define UNIFFI_FFIDEF_UNIFFI_IDE_FFI_CHECKSUM_METHOD_FFIWORKSPACE_REJECT_AGENT_TASK
 uint16_t uniffi_ide_ffi_checksum_method_ffiworkspace_reject_agent_task(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_IDE_FFI_CHECKSUM_METHOD_FFIWORKSPACE_RENAME_PATH
+#define UNIFFI_FFIDEF_UNIFFI_IDE_FFI_CHECKSUM_METHOD_FFIWORKSPACE_RENAME_PATH
+uint16_t uniffi_ide_ffi_checksum_method_ffiworkspace_rename_path(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_IDE_FFI_CHECKSUM_METHOD_FFIWORKSPACE_ROOT_DIR
+#define UNIFFI_FFIDEF_UNIFFI_IDE_FFI_CHECKSUM_METHOD_FFIWORKSPACE_ROOT_DIR
+uint16_t uniffi_ide_ffi_checksum_method_ffiworkspace_root_dir(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_IDE_FFI_CHECKSUM_METHOD_FFIWORKSPACE_SAVE_BUFFER_AS
+#define UNIFFI_FFIDEF_UNIFFI_IDE_FFI_CHECKSUM_METHOD_FFIWORKSPACE_SAVE_BUFFER_AS
+uint16_t uniffi_ide_ffi_checksum_method_ffiworkspace_save_buffer_as(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_IDE_FFI_CHECKSUM_METHOD_FFIWORKSPACE_SET_ACTIVE_BUFFER
+#define UNIFFI_FFIDEF_UNIFFI_IDE_FFI_CHECKSUM_METHOD_FFIWORKSPACE_SET_ACTIVE_BUFFER
+uint16_t uniffi_ide_ffi_checksum_method_ffiworkspace_set_active_buffer(void
     
 );
 #endif

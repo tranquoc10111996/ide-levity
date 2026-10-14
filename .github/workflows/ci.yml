@@ -104,15 +104,18 @@ jobs:
           java-version: "17"
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
-      - name: Install cargo-ndk & Generate Kotlin Bindings
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android,i686-linux-android
+      - name: Install Android NDK & cargo-ndk and Generate Kotlin Bindings
         run: |
-          cargo install cargo-ndk
+          yes | "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018"
+          export ANDROID_NDK_HOME="${ANDROID_HOME}/ndk/27.2.12479018"
+          cargo install cargo-ndk --locked
           bash platforms/android/scripts/build-rust-android.sh
-      - name: Assemble Android APK via Gradle
+      - name: Assemble Android APK via Gradle Wrapper
         working-directory: platforms/android
         run: |
-          gradle assembleRelease --no-daemon
+          ./gradlew assembleRelease --no-daemon -Pide.skipRustBuild=true
       - uses: actions/upload-artifact@v4
         with:
           name: ide-levity-android-apk

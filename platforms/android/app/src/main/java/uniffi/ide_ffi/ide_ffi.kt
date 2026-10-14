@@ -728,6 +728,32 @@ internal interface UniffiForeignFutureCompleteVoid : com.sun.jna.Callback {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
 
@@ -757,13 +783,39 @@ internal interface UniffiLib : Library {
     ): RustBuffer.ByValue
     fun uniffi_ide_ffi_fn_method_ffiworkspace_active_viewport(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
+    fun uniffi_ide_ffi_fn_method_ffiworkspace_clipboard_text(`ptr`: Pointer,`bufferId`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    fun uniffi_ide_ffi_fn_method_ffiworkspace_close_buffer(`ptr`: Pointer,`bufferId`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    fun uniffi_ide_ffi_fn_method_ffiworkspace_create_dir(`ptr`: Pointer,`path`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    fun uniffi_ide_ffi_fn_method_ffiworkspace_create_file(`ptr`: Pointer,`path`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
     fun uniffi_ide_ffi_fn_method_ffiworkspace_current_git_branch(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
+    fun uniffi_ide_ffi_fn_method_ffiworkspace_delete_path(`ptr`: Pointer,`path`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
     fun uniffi_ide_ffi_fn_method_ffiworkspace_dispatch(`ptr`: Pointer,`action`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    fun uniffi_ide_ffi_fn_method_ffiworkspace_has_unsaved_changes(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+    ): Byte
+    fun uniffi_ide_ffi_fn_method_ffiworkspace_list_directory(`ptr`: Pointer,`dir`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     fun uniffi_ide_ffi_fn_method_ffiworkspace_list_workspace_files(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
+    fun uniffi_ide_ffi_fn_method_ffiworkspace_new_untitled_buffer(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    fun uniffi_ide_ffi_fn_method_ffiworkspace_open_buffers(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
     fun uniffi_ide_ffi_fn_method_ffiworkspace_reject_agent_task(`ptr`: Pointer,`taskId`: Long,`bufferId`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    fun uniffi_ide_ffi_fn_method_ffiworkspace_rename_path(`ptr`: Pointer,`from`: RustBuffer.ByValue,`to`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    fun uniffi_ide_ffi_fn_method_ffiworkspace_root_dir(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    fun uniffi_ide_ffi_fn_method_ffiworkspace_save_buffer_as(`ptr`: Pointer,`bufferId`: Long,`path`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    fun uniffi_ide_ffi_fn_method_ffiworkspace_set_active_buffer(`ptr`: Pointer,`bufferId`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     fun ffi_ide_ffi_rustbuffer_alloc(`size`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
@@ -881,13 +933,39 @@ internal interface UniffiLib : Library {
     ): Short
     fun uniffi_ide_ffi_checksum_method_ffiworkspace_active_viewport(
     ): Short
+    fun uniffi_ide_ffi_checksum_method_ffiworkspace_clipboard_text(
+    ): Short
+    fun uniffi_ide_ffi_checksum_method_ffiworkspace_close_buffer(
+    ): Short
+    fun uniffi_ide_ffi_checksum_method_ffiworkspace_create_dir(
+    ): Short
+    fun uniffi_ide_ffi_checksum_method_ffiworkspace_create_file(
+    ): Short
     fun uniffi_ide_ffi_checksum_method_ffiworkspace_current_git_branch(
+    ): Short
+    fun uniffi_ide_ffi_checksum_method_ffiworkspace_delete_path(
     ): Short
     fun uniffi_ide_ffi_checksum_method_ffiworkspace_dispatch(
     ): Short
+    fun uniffi_ide_ffi_checksum_method_ffiworkspace_has_unsaved_changes(
+    ): Short
+    fun uniffi_ide_ffi_checksum_method_ffiworkspace_list_directory(
+    ): Short
     fun uniffi_ide_ffi_checksum_method_ffiworkspace_list_workspace_files(
     ): Short
+    fun uniffi_ide_ffi_checksum_method_ffiworkspace_new_untitled_buffer(
+    ): Short
+    fun uniffi_ide_ffi_checksum_method_ffiworkspace_open_buffers(
+    ): Short
     fun uniffi_ide_ffi_checksum_method_ffiworkspace_reject_agent_task(
+    ): Short
+    fun uniffi_ide_ffi_checksum_method_ffiworkspace_rename_path(
+    ): Short
+    fun uniffi_ide_ffi_checksum_method_ffiworkspace_root_dir(
+    ): Short
+    fun uniffi_ide_ffi_checksum_method_ffiworkspace_save_buffer_as(
+    ): Short
+    fun uniffi_ide_ffi_checksum_method_ffiworkspace_set_active_buffer(
     ): Short
     fun uniffi_ide_ffi_checksum_constructor_ffiworkspace_new(
     ): Short
@@ -914,16 +992,55 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     if (lib.uniffi_ide_ffi_checksum_method_ffiworkspace_active_viewport() != 30272.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_ide_ffi_checksum_method_ffiworkspace_clipboard_text() != 51653.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_ide_ffi_checksum_method_ffiworkspace_close_buffer() != 50360.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_ide_ffi_checksum_method_ffiworkspace_create_dir() != 20944.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_ide_ffi_checksum_method_ffiworkspace_create_file() != 37957.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_ide_ffi_checksum_method_ffiworkspace_current_git_branch() != 37417.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_ide_ffi_checksum_method_ffiworkspace_delete_path() != 33760.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_ide_ffi_checksum_method_ffiworkspace_dispatch() != 3710.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_ide_ffi_checksum_method_ffiworkspace_has_unsaved_changes() != 47155.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_ide_ffi_checksum_method_ffiworkspace_list_directory() != 38763.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_ide_ffi_checksum_method_ffiworkspace_list_workspace_files() != 30643.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_ide_ffi_checksum_method_ffiworkspace_new_untitled_buffer() != 47873.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_ide_ffi_checksum_method_ffiworkspace_open_buffers() != 1858.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_ide_ffi_checksum_method_ffiworkspace_reject_agent_task() != 19006.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_ide_ffi_checksum_method_ffiworkspace_rename_path() != 19344.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_ide_ffi_checksum_method_ffiworkspace_root_dir() != 22166.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_ide_ffi_checksum_method_ffiworkspace_save_buffer_as() != 30603.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_ide_ffi_checksum_method_ffiworkspace_set_active_buffer() != 31256.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_ide_ffi_checksum_constructor_ffiworkspace_new() != 28255.toShort()) {
@@ -1019,6 +1136,29 @@ public object FfiConverterUInt: FfiConverter<UInt, Int> {
 
     override fun write(value: UInt, buf: ByteBuffer) {
         buf.putInt(value.toInt())
+    }
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterInt: FfiConverter<Int, Int> {
+    override fun lift(value: Int): Int {
+        return value
+    }
+
+    override fun read(buf: ByteBuffer): Int {
+        return buf.getInt()
+    }
+
+    override fun lower(value: Int): Int {
+        return value
+    }
+
+    override fun allocationSize(value: Int) = 4UL
+
+    override fun write(value: Int, buf: ByteBuffer) {
+        buf.putInt(value)
     }
 }
 
@@ -1296,13 +1436,51 @@ public interface FfiWorkspaceInterface {
     
     fun `activeViewport`(): ViewportViewModel
     
+    /**
+     * Text to copy (selection, or current line when nothing is selected).
+     */
+    fun `clipboardText`(`bufferId`: kotlin.ULong): ClipboardPayload
+    
+    fun `closeBuffer`(`bufferId`: kotlin.ULong): ViewportViewModel
+    
+    fun `createDir`(`path`: kotlin.String): kotlin.String
+    
+    fun `createFile`(`path`: kotlin.String): ViewportViewModel
+    
     fun `currentGitBranch`(): kotlin.String?
+    
+    fun `deletePath`(`path`: kotlin.String)
     
     fun `dispatch`(`action`: EditorAction): ViewportViewModel
     
+    fun `hasUnsavedChanges`(): kotlin.Boolean
+    
+    /**
+     * Lists one directory level (folders first). Pass an empty string for the root.
+     */
+    fun `listDirectory`(`dir`: kotlin.String): List<DirEntryInfo>
+    
     fun `listWorkspaceFiles`(): List<kotlin.String>
     
+    fun `newUntitledBuffer`(): ViewportViewModel
+    
+    /**
+     * Open tabs in order.
+     */
+    fun `openBuffers`(): List<OpenBufferInfo>
+    
     fun `rejectAgentTask`(`taskId`: kotlin.ULong, `bufferId`: kotlin.ULong): ViewportViewModel
+    
+    fun `renamePath`(`from`: kotlin.String, `to`: kotlin.String): kotlin.String
+    
+    /**
+     * Absolute workspace root folder.
+     */
+    fun `rootDir`(): kotlin.String
+    
+    fun `saveBufferAs`(`bufferId`: kotlin.ULong, `path`: kotlin.String): ViewportViewModel
+    
+    fun `setActiveBuffer`(`bufferId`: kotlin.ULong): ViewportViewModel
     
     companion object
 }
@@ -1424,6 +1602,61 @@ open class FfiWorkspace: Disposable, AutoCloseable, FfiWorkspaceInterface {
     }
     
 
+    
+    /**
+     * Text to copy (selection, or current line when nothing is selected).
+     */
+    @Throws(FfiException::class)override fun `clipboardText`(`bufferId`: kotlin.ULong): ClipboardPayload {
+            return FfiConverterTypeClipboardPayload.lift(
+    callWithPointer {
+    uniffiRustCallWithError(FfiException) { _status ->
+    UniffiLib.INSTANCE.uniffi_ide_ffi_fn_method_ffiworkspace_clipboard_text(
+        it, FfiConverterULong.lower(`bufferId`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(FfiException::class)override fun `closeBuffer`(`bufferId`: kotlin.ULong): ViewportViewModel {
+            return FfiConverterTypeViewportViewModel.lift(
+    callWithPointer {
+    uniffiRustCallWithError(FfiException) { _status ->
+    UniffiLib.INSTANCE.uniffi_ide_ffi_fn_method_ffiworkspace_close_buffer(
+        it, FfiConverterULong.lower(`bufferId`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(FfiException::class)override fun `createDir`(`path`: kotlin.String): kotlin.String {
+            return FfiConverterString.lift(
+    callWithPointer {
+    uniffiRustCallWithError(FfiException) { _status ->
+    UniffiLib.INSTANCE.uniffi_ide_ffi_fn_method_ffiworkspace_create_dir(
+        it, FfiConverterString.lower(`path`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(FfiException::class)override fun `createFile`(`path`: kotlin.String): ViewportViewModel {
+            return FfiConverterTypeViewportViewModel.lift(
+    callWithPointer {
+    uniffiRustCallWithError(FfiException) { _status ->
+    UniffiLib.INSTANCE.uniffi_ide_ffi_fn_method_ffiworkspace_create_file(
+        it, FfiConverterString.lower(`path`),_status)
+}
+    }
+    )
+    }
+    
+
     override fun `currentGitBranch`(): kotlin.String? {
             return FfiConverterOptionalString.lift(
     callWithPointer {
@@ -1437,12 +1670,52 @@ open class FfiWorkspace: Disposable, AutoCloseable, FfiWorkspaceInterface {
     
 
     
+    @Throws(FfiException::class)override fun `deletePath`(`path`: kotlin.String)
+        = 
+    callWithPointer {
+    uniffiRustCallWithError(FfiException) { _status ->
+    UniffiLib.INSTANCE.uniffi_ide_ffi_fn_method_ffiworkspace_delete_path(
+        it, FfiConverterString.lower(`path`),_status)
+}
+    }
+    
+    
+
+    
     @Throws(FfiException::class)override fun `dispatch`(`action`: EditorAction): ViewportViewModel {
             return FfiConverterTypeViewportViewModel.lift(
     callWithPointer {
     uniffiRustCallWithError(FfiException) { _status ->
     UniffiLib.INSTANCE.uniffi_ide_ffi_fn_method_ffiworkspace_dispatch(
         it, FfiConverterTypeEditorAction.lower(`action`),_status)
+}
+    }
+    )
+    }
+    
+
+    override fun `hasUnsavedChanges`(): kotlin.Boolean {
+            return FfiConverterBoolean.lift(
+    callWithPointer {
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_ide_ffi_fn_method_ffiworkspace_has_unsaved_changes(
+        it, _status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Lists one directory level (folders first). Pass an empty string for the root.
+     */
+    @Throws(FfiException::class)override fun `listDirectory`(`dir`: kotlin.String): List<DirEntryInfo> {
+            return FfiConverterSequenceTypeDirEntryInfo.lift(
+    callWithPointer {
+    uniffiRustCallWithError(FfiException) { _status ->
+    UniffiLib.INSTANCE.uniffi_ide_ffi_fn_method_ffiworkspace_list_directory(
+        it, FfiConverterString.lower(`dir`),_status)
 }
     }
     )
@@ -1462,12 +1735,94 @@ open class FfiWorkspace: Disposable, AutoCloseable, FfiWorkspaceInterface {
     
 
     
+    @Throws(FfiException::class)override fun `newUntitledBuffer`(): ViewportViewModel {
+            return FfiConverterTypeViewportViewModel.lift(
+    callWithPointer {
+    uniffiRustCallWithError(FfiException) { _status ->
+    UniffiLib.INSTANCE.uniffi_ide_ffi_fn_method_ffiworkspace_new_untitled_buffer(
+        it, _status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Open tabs in order.
+     */override fun `openBuffers`(): List<OpenBufferInfo> {
+            return FfiConverterSequenceTypeOpenBufferInfo.lift(
+    callWithPointer {
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_ide_ffi_fn_method_ffiworkspace_open_buffers(
+        it, _status)
+}
+    }
+    )
+    }
+    
+
+    
     @Throws(FfiException::class)override fun `rejectAgentTask`(`taskId`: kotlin.ULong, `bufferId`: kotlin.ULong): ViewportViewModel {
             return FfiConverterTypeViewportViewModel.lift(
     callWithPointer {
     uniffiRustCallWithError(FfiException) { _status ->
     UniffiLib.INSTANCE.uniffi_ide_ffi_fn_method_ffiworkspace_reject_agent_task(
         it, FfiConverterULong.lower(`taskId`),FfiConverterULong.lower(`bufferId`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(FfiException::class)override fun `renamePath`(`from`: kotlin.String, `to`: kotlin.String): kotlin.String {
+            return FfiConverterString.lift(
+    callWithPointer {
+    uniffiRustCallWithError(FfiException) { _status ->
+    UniffiLib.INSTANCE.uniffi_ide_ffi_fn_method_ffiworkspace_rename_path(
+        it, FfiConverterString.lower(`from`),FfiConverterString.lower(`to`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Absolute workspace root folder.
+     */override fun `rootDir`(): kotlin.String {
+            return FfiConverterString.lift(
+    callWithPointer {
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_ide_ffi_fn_method_ffiworkspace_root_dir(
+        it, _status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(FfiException::class)override fun `saveBufferAs`(`bufferId`: kotlin.ULong, `path`: kotlin.String): ViewportViewModel {
+            return FfiConverterTypeViewportViewModel.lift(
+    callWithPointer {
+    uniffiRustCallWithError(FfiException) { _status ->
+    UniffiLib.INSTANCE.uniffi_ide_ffi_fn_method_ffiworkspace_save_buffer_as(
+        it, FfiConverterULong.lower(`bufferId`),FfiConverterString.lower(`path`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(FfiException::class)override fun `setActiveBuffer`(`bufferId`: kotlin.ULong): ViewportViewModel {
+            return FfiConverterTypeViewportViewModel.lift(
+    callWithPointer {
+    uniffiRustCallWithError(FfiException) { _status ->
+    UniffiLib.INSTANCE.uniffi_ide_ffi_fn_method_ffiworkspace_set_active_buffer(
+        it, FfiConverterULong.lower(`bufferId`),_status)
 }
     }
     )
@@ -1560,6 +1915,44 @@ public object FfiConverterTypeAgentTaskStatus: FfiConverterRustBuffer<AgentTaskS
 
 
 /**
+ * Clipboard payload for Copy/Cut.
+ */
+data class ClipboardPayload (
+    var `text`: kotlin.String, 
+    /**
+     * True when nothing was selected and the whole line(s) were copied.
+     */
+    var `isWholeLine`: kotlin.Boolean
+) {
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeClipboardPayload: FfiConverterRustBuffer<ClipboardPayload> {
+    override fun read(buf: ByteBuffer): ClipboardPayload {
+        return ClipboardPayload(
+            FfiConverterString.read(buf),
+            FfiConverterBoolean.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: ClipboardPayload) = (
+            FfiConverterString.allocationSize(value.`text`) +
+            FfiConverterBoolean.allocationSize(value.`isWholeLine`)
+    )
+
+    override fun write(value: ClipboardPayload, buf: ByteBuffer) {
+            FfiConverterString.write(value.`text`, buf)
+            FfiConverterBoolean.write(value.`isWholeLine`, buf)
+    }
+}
+
+
+
+/**
  * Visual cursor coordinates exported via UniFFI.
  */
 data class CursorRect (
@@ -1646,6 +2039,49 @@ public object FfiConverterTypeDiagnosticItem: FfiConverterRustBuffer<DiagnosticI
 
 
 /**
+ * One explorer entry (a single directory level).
+ */
+data class DirEntryInfo (
+    var `name`: kotlin.String, 
+    var `path`: kotlin.String, 
+    var `isDir`: kotlin.Boolean, 
+    var `isIgnored`: kotlin.Boolean
+) {
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeDirEntryInfo: FfiConverterRustBuffer<DirEntryInfo> {
+    override fun read(buf: ByteBuffer): DirEntryInfo {
+        return DirEntryInfo(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterBoolean.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: DirEntryInfo) = (
+            FfiConverterString.allocationSize(value.`name`) +
+            FfiConverterString.allocationSize(value.`path`) +
+            FfiConverterBoolean.allocationSize(value.`isDir`) +
+            FfiConverterBoolean.allocationSize(value.`isIgnored`)
+    )
+
+    override fun write(value: DirEntryInfo, buf: ByteBuffer) {
+            FfiConverterString.write(value.`name`, buf)
+            FfiConverterString.write(value.`path`, buf)
+            FfiConverterBoolean.write(value.`isDir`, buf)
+            FfiConverterBoolean.write(value.`isIgnored`, buf)
+    }
+}
+
+
+
+/**
  * Syntax highlight span within a `RenderedLine`.
  */
 data class HighlightSpan (
@@ -1718,6 +2154,52 @@ public object FfiConverterTypeLineDiffStatus: FfiConverterRustBuffer<LineDiffSta
     override fun write(value: LineDiffStatus, buf: ByteBuffer) {
             FfiConverterUInt.write(value.`lineNumber`, buf)
             FfiConverterTypeDiffMarkerKind.write(value.`status`, buf)
+    }
+}
+
+
+
+/**
+ * Open editor tab information.
+ */
+data class OpenBufferInfo (
+    var `bufferId`: kotlin.ULong, 
+    /**
+     * Absolute path, or `None` for untitled buffers.
+     */
+    var `path`: kotlin.String?, 
+    var `title`: kotlin.String, 
+    var `isDirty`: kotlin.Boolean
+) {
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeOpenBufferInfo: FfiConverterRustBuffer<OpenBufferInfo> {
+    override fun read(buf: ByteBuffer): OpenBufferInfo {
+        return OpenBufferInfo(
+            FfiConverterULong.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterBoolean.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: OpenBufferInfo) = (
+            FfiConverterULong.allocationSize(value.`bufferId`) +
+            FfiConverterOptionalString.allocationSize(value.`path`) +
+            FfiConverterString.allocationSize(value.`title`) +
+            FfiConverterBoolean.allocationSize(value.`isDirty`)
+    )
+
+    override fun write(value: OpenBufferInfo, buf: ByteBuffer) {
+            FfiConverterULong.write(value.`bufferId`, buf)
+            FfiConverterOptionalString.write(value.`path`, buf)
+            FfiConverterString.write(value.`title`, buf)
+            FfiConverterBoolean.write(value.`isDirty`, buf)
     }
 }
 
@@ -1889,7 +2371,9 @@ enum class CursorDirection {
     LINE_START,
     LINE_END,
     DOCUMENT_START,
-    DOCUMENT_END;
+    DOCUMENT_END,
+    WORD_LEFT,
+    WORD_RIGHT;
     companion object
 }
 
@@ -2058,6 +2542,63 @@ sealed class EditorAction {
         companion object
     }
     
+    data class InsertNewline(
+        val `bufferId`: kotlin.ULong) : EditorAction() {
+        companion object
+    }
+    
+    data class Indent(
+        val `bufferId`: kotlin.ULong) : EditorAction() {
+        companion object
+    }
+    
+    data class Outdent(
+        val `bufferId`: kotlin.ULong) : EditorAction() {
+        companion object
+    }
+    
+    data class ToggleLineComment(
+        val `bufferId`: kotlin.ULong) : EditorAction() {
+        companion object
+    }
+    
+    data class SelectAll(
+        val `bufferId`: kotlin.ULong) : EditorAction() {
+        companion object
+    }
+    
+    data class AddNextOccurrence(
+        val `bufferId`: kotlin.ULong) : EditorAction() {
+        companion object
+    }
+    
+    data class DeleteWordBackward(
+        val `bufferId`: kotlin.ULong) : EditorAction() {
+        companion object
+    }
+    
+    data class DeleteWordForward(
+        val `bufferId`: kotlin.ULong) : EditorAction() {
+        companion object
+    }
+    
+    data class DeleteSelectionOrLine(
+        val `bufferId`: kotlin.ULong) : EditorAction() {
+        companion object
+    }
+    
+    data class MovePage(
+        val `bufferId`: kotlin.ULong, 
+        val `pages`: kotlin.Int, 
+        val `select`: kotlin.Boolean) : EditorAction() {
+        companion object
+    }
+    
+    data class CollapseCursors(
+        val `bufferId`: kotlin.ULong) : EditorAction() {
+        companion object
+    }
+    
 
     
     companion object
@@ -2112,6 +2653,41 @@ public object FfiConverterTypeEditorAction : FfiConverterRustBuffer<EditorAction
                 )
             12 -> EditorAction.SubmitAgentPrompt(
                 FfiConverterString.read(buf),
+                )
+            13 -> EditorAction.InsertNewline(
+                FfiConverterULong.read(buf),
+                )
+            14 -> EditorAction.Indent(
+                FfiConverterULong.read(buf),
+                )
+            15 -> EditorAction.Outdent(
+                FfiConverterULong.read(buf),
+                )
+            16 -> EditorAction.ToggleLineComment(
+                FfiConverterULong.read(buf),
+                )
+            17 -> EditorAction.SelectAll(
+                FfiConverterULong.read(buf),
+                )
+            18 -> EditorAction.AddNextOccurrence(
+                FfiConverterULong.read(buf),
+                )
+            19 -> EditorAction.DeleteWordBackward(
+                FfiConverterULong.read(buf),
+                )
+            20 -> EditorAction.DeleteWordForward(
+                FfiConverterULong.read(buf),
+                )
+            21 -> EditorAction.DeleteSelectionOrLine(
+                FfiConverterULong.read(buf),
+                )
+            22 -> EditorAction.MovePage(
+                FfiConverterULong.read(buf),
+                FfiConverterInt.read(buf),
+                FfiConverterBoolean.read(buf),
+                )
+            23 -> EditorAction.CollapseCursors(
+                FfiConverterULong.read(buf),
                 )
             else -> throw RuntimeException("invalid enum value, something is very wrong!!")
         }
@@ -2210,6 +2786,85 @@ public object FfiConverterTypeEditorAction : FfiConverterRustBuffer<EditorAction
                 + FfiConverterString.allocationSize(value.`prompt`)
             )
         }
+        is EditorAction.InsertNewline -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterULong.allocationSize(value.`bufferId`)
+            )
+        }
+        is EditorAction.Indent -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterULong.allocationSize(value.`bufferId`)
+            )
+        }
+        is EditorAction.Outdent -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterULong.allocationSize(value.`bufferId`)
+            )
+        }
+        is EditorAction.ToggleLineComment -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterULong.allocationSize(value.`bufferId`)
+            )
+        }
+        is EditorAction.SelectAll -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterULong.allocationSize(value.`bufferId`)
+            )
+        }
+        is EditorAction.AddNextOccurrence -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterULong.allocationSize(value.`bufferId`)
+            )
+        }
+        is EditorAction.DeleteWordBackward -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterULong.allocationSize(value.`bufferId`)
+            )
+        }
+        is EditorAction.DeleteWordForward -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterULong.allocationSize(value.`bufferId`)
+            )
+        }
+        is EditorAction.DeleteSelectionOrLine -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterULong.allocationSize(value.`bufferId`)
+            )
+        }
+        is EditorAction.MovePage -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterULong.allocationSize(value.`bufferId`)
+                + FfiConverterInt.allocationSize(value.`pages`)
+                + FfiConverterBoolean.allocationSize(value.`select`)
+            )
+        }
+        is EditorAction.CollapseCursors -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterULong.allocationSize(value.`bufferId`)
+            )
+        }
     }
 
     override fun write(value: EditorAction, buf: ByteBuffer) {
@@ -2280,6 +2935,63 @@ public object FfiConverterTypeEditorAction : FfiConverterRustBuffer<EditorAction
             is EditorAction.SubmitAgentPrompt -> {
                 buf.putInt(12)
                 FfiConverterString.write(value.`prompt`, buf)
+                Unit
+            }
+            is EditorAction.InsertNewline -> {
+                buf.putInt(13)
+                FfiConverterULong.write(value.`bufferId`, buf)
+                Unit
+            }
+            is EditorAction.Indent -> {
+                buf.putInt(14)
+                FfiConverterULong.write(value.`bufferId`, buf)
+                Unit
+            }
+            is EditorAction.Outdent -> {
+                buf.putInt(15)
+                FfiConverterULong.write(value.`bufferId`, buf)
+                Unit
+            }
+            is EditorAction.ToggleLineComment -> {
+                buf.putInt(16)
+                FfiConverterULong.write(value.`bufferId`, buf)
+                Unit
+            }
+            is EditorAction.SelectAll -> {
+                buf.putInt(17)
+                FfiConverterULong.write(value.`bufferId`, buf)
+                Unit
+            }
+            is EditorAction.AddNextOccurrence -> {
+                buf.putInt(18)
+                FfiConverterULong.write(value.`bufferId`, buf)
+                Unit
+            }
+            is EditorAction.DeleteWordBackward -> {
+                buf.putInt(19)
+                FfiConverterULong.write(value.`bufferId`, buf)
+                Unit
+            }
+            is EditorAction.DeleteWordForward -> {
+                buf.putInt(20)
+                FfiConverterULong.write(value.`bufferId`, buf)
+                Unit
+            }
+            is EditorAction.DeleteSelectionOrLine -> {
+                buf.putInt(21)
+                FfiConverterULong.write(value.`bufferId`, buf)
+                Unit
+            }
+            is EditorAction.MovePage -> {
+                buf.putInt(22)
+                FfiConverterULong.write(value.`bufferId`, buf)
+                FfiConverterInt.write(value.`pages`, buf)
+                FfiConverterBoolean.write(value.`select`, buf)
+                Unit
+            }
+            is EditorAction.CollapseCursors -> {
+                buf.putInt(23)
+                FfiConverterULong.write(value.`bufferId`, buf)
                 Unit
             }
         }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
@@ -2497,6 +3209,34 @@ public object FfiConverterSequenceTypeDiagnosticItem: FfiConverterRustBuffer<Lis
 /**
  * @suppress
  */
+public object FfiConverterSequenceTypeDirEntryInfo: FfiConverterRustBuffer<List<DirEntryInfo>> {
+    override fun read(buf: ByteBuffer): List<DirEntryInfo> {
+        val len = buf.getInt()
+        return List<DirEntryInfo>(len) {
+            FfiConverterTypeDirEntryInfo.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<DirEntryInfo>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeDirEntryInfo.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<DirEntryInfo>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeDirEntryInfo.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterSequenceTypeHighlightSpan: FfiConverterRustBuffer<List<HighlightSpan>> {
     override fun read(buf: ByteBuffer): List<HighlightSpan> {
         val len = buf.getInt()
@@ -2543,6 +3283,34 @@ public object FfiConverterSequenceTypeLineDiffStatus: FfiConverterRustBuffer<Lis
         buf.putInt(value.size)
         value.iterator().forEach {
             FfiConverterTypeLineDiffStatus.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeOpenBufferInfo: FfiConverterRustBuffer<List<OpenBufferInfo>> {
+    override fun read(buf: ByteBuffer): List<OpenBufferInfo> {
+        val len = buf.getInt()
+        return List<OpenBufferInfo>(len) {
+            FfiConverterTypeOpenBufferInfo.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<OpenBufferInfo>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeOpenBufferInfo.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<OpenBufferInfo>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeOpenBufferInfo.write(it, buf)
         }
     }
 }

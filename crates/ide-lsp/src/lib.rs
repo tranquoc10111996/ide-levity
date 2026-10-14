@@ -1,679 +1,131 @@
-//! `ide-lsp`: Asynchronous JSON-RPC 2.0 Language Server Protocol client supporting
-//! `StdioTransport` (Desktop), `WebSocketTransport` (Mobile Remote LSP), and `MockTransport`.
-//! Implements `textDocument/didOpen`, `didChange`, `completion`, `hover`, `definition`,
-//! and `publishDiagnostics`.
+//! `ide-lsp`: Language Server Protocol support for IDE Levity.
+//!
+//! Two layers:
+//!
+//! * [`LspClient`] - a hardened asynchronous JSON-RPC 2.0 client over
+//!   [`StdioTransport`] (desktop), [`WebSocketTransport`] (remote/mobile) or
+//!   [`MockTransport`] (tests). It correlates responses, applies timeouts, sends
+//!   `$/cancelRequest` for abandoned requests, answers server-to-client requests,
+//!   routes notifications and shuts servers down cleanly.
+//! * [`LanguageServerManager`] - what the IDE uses: detects installed servers per
+//!   language, starts one per project root on demand, synchronizes documents and
+//!   exposes cancellable requests (completion, hover, definition, references,
+//!   formatting) plus an [`LspEvent`] channel (diagnostics, status, messages). It is
+//!   safe to drive from a GUI thread outside any Tokio runtime.
 
-use lsp_types::{
-    CompletionItem, CompletionParams, CompletionResponse, Diagnostic, DidChangeTextDocumentParams,
-    DidOpenTextDocumentParams, GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverParams,
-    Position, PublishDiagnosticsParams, TextDocumentContentChangeEvent, TextDocumentIdentifier,
-    TextDocumentItem, TextDocumentPositionParams, Uri, VersionedTextDocumentIdentifier,
-    WorkDoneProgressParams,
+mod client;
+mod convert;
+mod jsonrpc;
+mod manager;
+mod registry;
+mod transport;
+
+pub use client::{
+    default_client_capabilities, lookup_section, ClientEvent, ClientOptions, LspClient,
+    PendingRequest, DEFAULT_REQUEST_TIMEOUT, INITIALIZE_TIMEOUT,
 };
-use parking_lot::RwLock;
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use std::collections::HashMap;
-use std::process::Stdio;
-use std::str::FromStr;
-use std::sync::atomic::{AtomicI64, Ordering};
-use std::sync::Arc;
-use thiserror::Error;
-use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
-use tokio::net::TcpStream;
-use tokio::process::Command;
-use tokio::sync::{mpsc, oneshot, Mutex};
+pub use convert::{
+    completion_entries, completion_entry, definition_to_locations, hover_to_text, lsp_location,
+    path_to_uri, snippet_to_plain_text, text_end_position, uri_to_path, CompletionEntry,
+    CompletionKind, DiagnosticLevel, Location, LspDiagnostic, LspPosition, LspRange,
+    LspTextEdit,
+};
+pub use jsonrpc::{
+    encode_lsp_frame, error_codes, read_lsp_frame, read_lsp_frame_bytes, JsonRpcErrorPayload,
+    JsonRpcMessage, JsonRpcNotification, JsonRpcRequest, JsonRpcResponse, RequestId,
+    MAX_FRAME_BYTES,
+};
+pub use manager::{
+    LanguageServerManager, LspEvent, LspEventReceiver, LspRequest, ManagerOptions, MessageLevel,
+    MissingServer, OpenOutcome, ServerInfo, ServerKey, ServerState,
+};
+pub use registry::{
+    find_executable, find_root, language_id_for_path, normalize_language_id, LanguageOverride,
+    LspConfig, ServerAvailability, ServerRegistry, ServerSpec,
+};
+pub use transport::{
+    encode_ws_frame, encode_ws_text_frame, read_ws_frame, read_ws_raw_frame, websocket_accept_key,
+    MockTransport, ServerProcess, SpawnOptions, StderrTail, StdioTransport, TransportChannels,
+    WebSocketTransport, WsFrame, STDERR_TAIL_LINES,
+};
 
+/// Raw protocol types, re-exported for callers that need them.
+pub use lsp_types;
+
+use std::time::Duration;
+use thiserror::Error;
+
+/// Errors produced by this crate.
 #[derive(Debug, Error)]
 pub enum LspError {
+    /// Underlying I/O failure.
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
+    /// (De)serialization failure.
     #[error("JSON serialization error: {0}")]
     Json(#[from] serde_json::Error),
+    /// The connection to the server is closed.
     #[error("LSP transport closed")]
     TransportClosed,
+    /// The server answered with a JSON-RPC error.
     #[error("JSON-RPC error ({code}): {message}")]
-    RpcError { code: i64, message: String },
+    RpcError {
+        /// Error code (see [`error_codes`]).
+        code: i64,
+        /// Error message.
+        message: String,
+    },
+    /// A string could not be parsed as a URI / converted from a path.
     #[error("Invalid URI: {0}")]
     InvalidUri(String),
+    /// WebSocket upgrade failed.
     #[error("WebSocket handshake failed: {0}")]
     WebSocketHandshake(String),
-}
-
-/// JSON-RPC 2.0 Request object.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct JsonRpcRequest {
-    pub jsonrpc: String,
-    pub id: i64,
-    pub method: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub params: Option<Value>,
-}
-
-/// JSON-RPC 2.0 Error payload.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct JsonRpcErrorPayload {
-    pub code: i64,
-    pub message: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub data: Option<Value>,
-}
-
-/// JSON-RPC 2.0 Response object.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct JsonRpcResponse {
-    pub jsonrpc: String,
-    pub id: i64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub result: Option<Value>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub error: Option<JsonRpcErrorPayload>,
-}
-
-/// JSON-RPC 2.0 Notification object.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct JsonRpcNotification {
-    pub jsonrpc: String,
-    pub method: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub params: Option<Value>,
-}
-
-/// Unified JSON-RPC 2.0 message envelope.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum JsonRpcMessage {
-    Request(JsonRpcRequest),
-    Response(JsonRpcResponse),
-    Notification(JsonRpcNotification),
-}
-
-/// Encodes a `JsonRpcMessage` using the standard LSP `Content-Length` HTTP-like header framing.
-pub fn encode_lsp_frame(msg: &JsonRpcMessage) -> Result<Vec<u8>, LspError> {
-    let body = serde_json::to_vec(msg)?;
-    let header = format!("Content-Length: {}\r\n\r\n", body.len());
-    let mut frame = Vec::with_capacity(header.len() + body.len());
-    frame.extend_from_slice(header.as_bytes());
-    frame.extend_from_slice(&body);
-    Ok(frame)
-}
-
-/// Reads a single `Content-Length`-framed `JsonRpcMessage` from an async buffered reader.
-pub async fn read_lsp_frame<R: AsyncBufReadExt + Unpin>(
-    reader: &mut R,
-) -> Result<Option<JsonRpcMessage>, LspError> {
-    let mut content_length: Option<usize> = None;
-    let mut line = String::new();
-
-    loop {
-        line.clear();
-        let bytes_read = reader.read_line(&mut line).await?;
-        if bytes_read == 0 {
-            return Ok(None);
-        }
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            if content_length.is_some() {
-                break;
-            }
-            continue;
-        }
-        if let Some(rest) = trimmed.strip_prefix("Content-Length:") {
-            if let Ok(len) = rest.trim().parse::<usize>() {
-                content_length = Some(len);
-            }
-        }
-    }
-
-    let len = content_length.ok_or(LspError::TransportClosed)?;
-    let mut body = vec![0u8; len];
-    reader.read_exact(&mut body).await?;
-    let msg = serde_json::from_slice::<JsonRpcMessage>(&body)?;
-    Ok(Some(msg))
-}
-
-/// Trait implemented by all asynchronous LSP transports (`StdioTransport`, `WebSocketTransport`, `MockTransport`).
-pub struct TransportChannels {
-    pub outgoing_tx: mpsc::UnboundedSender<JsonRpcMessage>,
-    pub incoming_rx: Mutex<mpsc::UnboundedReceiver<JsonRpcMessage>>,
-}
-
-/// Desktop transport that communicates over standard input/output (process stdio or duplex streams)
-/// using `Content-Length` framed JSON-RPC 2.0 packets.
-pub struct StdioTransport {
-    channels: TransportChannels,
-}
-
-impl StdioTransport {
-    /// Spawns a local Language Server process (e.g. `rust-analyzer`, `pyright-langserver`) and attaches to its stdio.
-    pub fn spawn(program: &str, args: &[&str]) -> Result<Self, LspError> {
-        let mut child = Command::new(program)
-            .args(args)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .kill_on_drop(true)
-            .spawn()?;
-
-        let stdin = child.stdin.take().ok_or(LspError::TransportClosed)?;
-        let stdout = child.stdout.take().ok_or(LspError::TransportClosed)?;
-
-        Ok(Self::from_streams(stdout, stdin))
-    }
-
-    /// Creates a `StdioTransport` from any pair of `AsyncRead` and `AsyncWrite` streams.
-    pub fn from_streams<R, W>(reader: R, mut writer: W) -> Self
-    where
-        R: AsyncRead + Unpin + Send + 'static,
-        W: AsyncWrite + Unpin + Send + 'static,
-    {
-        let (out_tx, mut out_rx) = mpsc::unbounded_channel::<JsonRpcMessage>();
-        let (in_tx, in_rx) = mpsc::unbounded_channel::<JsonRpcMessage>();
-
-        tokio::spawn(async move {
-            while let Some(msg) = out_rx.recv().await {
-                if let Ok(frame) = encode_lsp_frame(&msg) {
-                    if writer.write_all(&frame).await.is_err() {
-                        break;
-                    }
-                    let _ = writer.flush().await;
-                }
-            }
-        });
-
-        tokio::spawn(async move {
-            let mut buf_reader = BufReader::new(reader);
-            while let Ok(Some(msg)) = read_lsp_frame(&mut buf_reader).await {
-                if in_tx.send(msg).is_err() {
-                    break;
-                }
-            }
-        });
-
-        Self {
-            channels: TransportChannels {
-                outgoing_tx: out_tx,
-                incoming_rx: Mutex::new(in_rx),
-            },
-        }
-    }
-
-    pub fn into_channels(self) -> TransportChannels {
-        self.channels
-    }
-}
-
-/// Mobile / Remote transport that connects to a remote LSP bridge over WebSocket (RFC 6455).
-pub struct WebSocketTransport {
-    channels: TransportChannels,
-}
-
-impl WebSocketTransport {
-    /// Connects to a `ws://host:port/path` endpoint and performs the HTTP Upgrade handshake.
-    pub async fn connect(ws_url: &str) -> Result<Self, LspError> {
-        let stripped = ws_url
-            .strip_prefix("ws://")
-            .ok_or_else(|| LspError::WebSocketHandshake("URL must start with ws://".into()))?;
-        let (host_port, path) = match stripped.find('/') {
-            Some(idx) => (&stripped[..idx], &stripped[idx..]),
-            None => (stripped, "/"),
-        };
-
-        let mut stream = TcpStream::connect(host_port).await?;
-        let request = format!(
-            "GET {path} HTTP/1.1\r\n\
-             Host: {host_port}\r\n\
-             Upgrade: websocket\r\n\
-             Connection: Upgrade\r\n\
-             Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
-             Sec-WebSocket-Version: 13\r\n\r\n"
-        );
-        stream.write_all(request.as_bytes()).await?;
-        stream.flush().await?;
-
-        let (read_half, write_half) = tokio::io::split(stream);
-        let mut buf_reader = BufReader::new(read_half);
-        let mut status_line = String::new();
-        buf_reader.read_line(&mut status_line).await?;
-        if !status_line.contains("101") {
-            return Err(LspError::WebSocketHandshake(format!(
-                "Expected HTTP 101 Switching Protocols, got: {}",
-                status_line.trim()
-            )));
-        }
-        loop {
-            let mut header_line = String::new();
-            let n = buf_reader.read_line(&mut header_line).await?;
-            if n == 0 || header_line.trim().is_empty() {
-                break;
-            }
-        }
-
-        Ok(Self::from_framed_streams(buf_reader, write_half))
-    }
-
-    /// Creates a `WebSocketTransport` over an already-upgraded byte stream using RFC 6455 frames.
-    pub fn from_framed_streams<R, W>(mut reader: R, mut writer: W) -> Self
-    where
-        R: AsyncRead + Unpin + Send + 'static,
-        W: AsyncWrite + Unpin + Send + 'static,
-    {
-        let (out_tx, mut out_rx) = mpsc::unbounded_channel::<JsonRpcMessage>();
-        let (in_tx, in_rx) = mpsc::unbounded_channel::<JsonRpcMessage>();
-
-        tokio::spawn(async move {
-            while let Some(msg) = out_rx.recv().await {
-                if let Ok(payload) = serde_json::to_vec(&msg) {
-                    let frame = encode_ws_text_frame(&payload);
-                    if writer.write_all(&frame).await.is_err() {
-                        break;
-                    }
-                    let _ = writer.flush().await;
-                }
-            }
-        });
-
-        tokio::spawn(async move {
-            while let Ok(Some(payload)) = read_ws_frame(&mut reader).await {
-                if let Ok(msg) = serde_json::from_slice::<JsonRpcMessage>(&payload) {
-                    if in_tx.send(msg).is_err() {
-                        break;
-                    }
-                }
-            }
-        });
-
-        Self {
-            channels: TransportChannels {
-                outgoing_tx: out_tx,
-                incoming_rx: Mutex::new(in_rx),
-            },
-        }
-    }
-
-    pub fn into_channels(self) -> TransportChannels {
-        self.channels
-    }
-}
-
-/// Encodes a WebSocket text frame (FIN=1, opcode=1).
-pub fn encode_ws_text_frame(payload: &[u8]) -> Vec<u8> {
-    let mut frame = Vec::with_capacity(payload.len() + 10);
-    frame.push(0x81); // FIN + Text opcode
-    let len = payload.len();
-    if len <= 125 {
-        frame.push(len as u8);
-    } else if len <= 65535 {
-        frame.push(126);
-        frame.extend_from_slice(&(len as u16).to_be_bytes());
-    } else {
-        frame.push(127);
-        frame.extend_from_slice(&(len as u64).to_be_bytes());
-    }
-    frame.extend_from_slice(payload);
-    frame
-}
-
-/// Reads a single WebSocket frame payload.
-pub async fn read_ws_frame<R: AsyncRead + Unpin>(
-    reader: &mut R,
-) -> Result<Option<Vec<u8>>, LspError> {
-    let mut header = [0u8; 2];
-    match reader.read_exact(&mut header).await {
-        Ok(_) => {}
-        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
-        Err(e) => return Err(LspError::Io(e)),
-    }
-    let opcode = header[0] & 0x0F;
-    if opcode == 0x08 {
-        // Close frame
-        return Ok(None);
-    }
-    let masked = (header[1] & 0x80) != 0;
-    let mut len = (header[1] & 0x7F) as usize;
-    if len == 126 {
-        let mut ext = [0u8; 2];
-        reader.read_exact(&mut ext).await?;
-        len = u16::from_be_bytes(ext) as usize;
-    } else if len == 127 {
-        let mut ext = [0u8; 8];
-        reader.read_exact(&mut ext).await?;
-        len = u64::from_be_bytes(ext) as usize;
-    }
-    let mut mask_key = [0u8; 4];
-    if masked {
-        reader.read_exact(&mut mask_key).await?;
-    }
-    let mut payload = vec![0u8; len];
-    reader.read_exact(&mut payload).await?;
-    if masked {
-        for (i, byte) in payload.iter_mut().enumerate() {
-            *byte ^= mask_key[i % 4];
-        }
-    }
-    Ok(Some(payload))
-}
-
-/// Mock transport for deterministic testing of all LSP requests and notifications.
-pub struct MockTransport {
-    channels: TransportChannels,
-}
-
-impl MockTransport {
-    /// Creates a `MockTransport` paired with a server-side handler function and a notification sender.
-    pub fn new<F>(
-        mut handler: F,
-    ) -> (
-        Self,
-        mpsc::UnboundedSender<JsonRpcNotification>,
-        Arc<RwLock<Vec<JsonRpcNotification>>>,
-    )
-    where
-        F: FnMut(&JsonRpcRequest) -> Result<Value, JsonRpcErrorPayload> + Send + 'static,
-    {
-        let (client_out_tx, mut server_in_rx) = mpsc::unbounded_channel::<JsonRpcMessage>();
-        let (server_out_tx, client_in_rx) = mpsc::unbounded_channel::<JsonRpcMessage>();
-        let (notify_tx, mut notify_rx) = mpsc::unbounded_channel::<JsonRpcNotification>();
-
-        let recorded_notifications = Arc::new(RwLock::new(Vec::new()));
-        let recorded_clone = Arc::clone(&recorded_notifications);
-        let server_out_tx_clone = server_out_tx.clone();
-
-        // Forward server-originated notifications (such as publishDiagnostics)
-        tokio::spawn(async move {
-            while let Some(notif) = notify_rx.recv().await {
-                if server_out_tx_clone
-                    .send(JsonRpcMessage::Notification(notif))
-                    .is_err()
-                {
-                    break;
-                }
-            }
-        });
-
-        // Process incoming client requests & notifications
-        tokio::spawn(async move {
-            while let Some(msg) = server_in_rx.recv().await {
-                match msg {
-                    JsonRpcMessage::Request(req) => {
-                        let response = match handler(&req) {
-                            Ok(val) => JsonRpcResponse {
-                                jsonrpc: "2.0".to_string(),
-                                id: req.id,
-                                result: Some(val),
-                                error: None,
-                            },
-                            Err(err) => JsonRpcResponse {
-                                jsonrpc: "2.0".to_string(),
-                                id: req.id,
-                                result: None,
-                                error: Some(err),
-                            },
-                        };
-                        let _ = server_out_tx.send(JsonRpcMessage::Response(response));
-                    }
-                    JsonRpcMessage::Notification(notif) => {
-                        recorded_clone.write().push(notif);
-                    }
-                    JsonRpcMessage::Response(_) => {}
-                }
-            }
-        });
-
-        (
-            Self {
-                channels: TransportChannels {
-                    outgoing_tx: client_out_tx,
-                    incoming_rx: Mutex::new(client_in_rx),
-                },
-            },
-            notify_tx,
-            recorded_notifications,
-        )
-    }
-
-    pub fn into_channels(self) -> TransportChannels {
-        self.channels
-    }
-}
-
-/// Asynchronous JSON-RPC 2.0 LSP client.
-pub struct LspClient {
-    next_id: AtomicI64,
-    outgoing_tx: mpsc::UnboundedSender<JsonRpcMessage>,
-    pending: Arc<RwLock<HashMap<i64, oneshot::Sender<JsonRpcResponse>>>>,
-    diagnostics: Arc<RwLock<HashMap<String, Vec<Diagnostic>>>>,
-}
-
-impl LspClient {
-    /// Creates a new `LspClient` from `TransportChannels` and starts its background message router.
-    pub fn new(channels: TransportChannels) -> Self {
-        let pending: Arc<RwLock<HashMap<i64, oneshot::Sender<JsonRpcResponse>>>> =
-            Arc::new(RwLock::new(HashMap::new()));
-        let diagnostics: Arc<RwLock<HashMap<String, Vec<Diagnostic>>>> =
-            Arc::new(RwLock::new(HashMap::new()));
-
-        let pending_clone = Arc::clone(&pending);
-        let diagnostics_clone = Arc::clone(&diagnostics);
-
-        tokio::spawn(async move {
-            let mut rx = channels.incoming_rx.lock().await;
-            while let Some(msg) = rx.recv().await {
-                match msg {
-                    JsonRpcMessage::Response(resp) => {
-                        if let Some(tx) = pending_clone.write().remove(&resp.id) {
-                            let _ = tx.send(resp);
-                        }
-                    }
-                    JsonRpcMessage::Notification(notif) => {
-                        if notif.method == "textDocument/publishDiagnostics" {
-                            if let Some(params_val) = notif.params {
-                                if let Ok(params) =
-                                    serde_json::from_value::<PublishDiagnosticsParams>(params_val)
-                                {
-                                    diagnostics_clone
-                                        .write()
-                                        .insert(params.uri.to_string(), params.diagnostics);
-                                }
-                            }
-                        }
-                    }
-                    JsonRpcMessage::Request(_) => {}
-                }
-            }
-        });
-
-        Self {
-            next_id: AtomicI64::new(1),
-            outgoing_tx: channels.outgoing_tx,
-            pending,
-            diagnostics,
-        }
-    }
-
-    pub fn from_stdio(transport: StdioTransport) -> Self {
-        Self::new(transport.into_channels())
-    }
-
-    pub fn from_websocket(transport: WebSocketTransport) -> Self {
-        Self::new(transport.into_channels())
-    }
-
-    pub fn from_mock(transport: MockTransport) -> Self {
-        Self::new(transport.into_channels())
-    }
-
-    /// Sends a JSON-RPC 2.0 request and awaits the typed response.
-    pub async fn send_request<P: Serialize, R: for<'de> Deserialize<'de>>(
-        &self,
-        method: &str,
-        params: P,
-    ) -> Result<R, LspError> {
-        let id = self.next_id.fetch_add(1, Ordering::SeqCst);
-        let params_val = serde_json::to_value(params)?;
-        let req = JsonRpcRequest {
-            jsonrpc: "2.0".to_string(),
-            id,
-            method: method.to_string(),
-            params: Some(params_val),
-        };
-
-        let (tx, rx) = oneshot::channel();
-        self.pending.write().insert(id, tx);
-
-        self.outgoing_tx
-            .send(JsonRpcMessage::Request(req))
-            .map_err(|_| LspError::TransportClosed)?;
-
-        let resp = rx.await.map_err(|_| LspError::TransportClosed)?;
-        if let Some(err) = resp.error {
-            return Err(LspError::RpcError {
-                code: err.code,
-                message: err.message,
-            });
-        }
-        let result_val = resp.result.unwrap_or(Value::Null);
-        Ok(serde_json::from_value(result_val)?)
-    }
-
-    /// Sends a JSON-RPC 2.0 notification (`textDocument/didOpen`, `textDocument/didChange`, etc.).
-    pub fn send_notification<P: Serialize>(&self, method: &str, params: P) -> Result<(), LspError> {
-        let params_val = serde_json::to_value(params)?;
-        let notif = JsonRpcNotification {
-            jsonrpc: "2.0".to_string(),
-            method: method.to_string(),
-            params: Some(params_val),
-        };
-        self.outgoing_tx
-            .send(JsonRpcMessage::Notification(notif))
-            .map_err(|_| LspError::TransportClosed)
-    }
-
-    /// Helper to parse an LSP `Uri` from string.
-    pub fn parse_uri(uri_str: &str) -> Result<Uri, LspError> {
-        Uri::from_str(uri_str).map_err(|e| LspError::InvalidUri(format!("{uri_str}: {e}")))
-    }
-
-    /// Sends `textDocument/didOpen`.
-    pub fn did_open(
-        &self,
-        uri_str: &str,
-        language_id: &str,
-        version: i32,
-        text: String,
-    ) -> Result<(), LspError> {
-        let uri = Self::parse_uri(uri_str)?;
-        let params = DidOpenTextDocumentParams {
-            text_document: TextDocumentItem {
-                uri,
-                language_id: language_id.to_string(),
-                version,
-                text,
-            },
-        };
-        self.send_notification("textDocument/didOpen", params)
-    }
-
-    /// Sends `textDocument/didChange` with full document synchronization.
-    pub fn did_change(
-        &self,
-        uri_str: &str,
-        version: i32,
-        new_text: String,
-    ) -> Result<(), LspError> {
-        let uri = Self::parse_uri(uri_str)?;
-        let params = DidChangeTextDocumentParams {
-            text_document: VersionedTextDocumentIdentifier { uri, version },
-            content_changes: vec![TextDocumentContentChangeEvent {
-                range: None,
-                range_length: None,
-                text: new_text,
-            }],
-        };
-        self.send_notification("textDocument/didChange", params)
-    }
-
-    /// Requests `textDocument/completion` at `(line, character)` and normalizes the response.
-    pub async fn completion(
-        &self,
-        uri_str: &str,
-        line: u32,
-        character: u32,
-    ) -> Result<Vec<CompletionItem>, LspError> {
-        let uri = Self::parse_uri(uri_str)?;
-        let params = CompletionParams {
-            text_document_position: TextDocumentPositionParams {
-                text_document: TextDocumentIdentifier { uri },
-                position: Position { line, character },
-            },
-            work_done_progress_params: WorkDoneProgressParams::default(),
-            partial_result_params: Default::default(),
-            context: None,
-        };
-        let resp: Option<CompletionResponse> =
-            self.send_request("textDocument/completion", params).await?;
-        let items = match resp {
-            Some(CompletionResponse::Array(arr)) => arr,
-            Some(CompletionResponse::List(list)) => list.items,
-            None => Vec::new(),
-        };
-        Ok(items)
-    }
-
-    /// Requests `textDocument/hover` at `(line, character)`.
-    pub async fn hover(
-        &self,
-        uri_str: &str,
-        line: u32,
-        character: u32,
-    ) -> Result<Option<Hover>, LspError> {
-        let uri = Self::parse_uri(uri_str)?;
-        let params = HoverParams {
-            text_document_position_params: TextDocumentPositionParams {
-                text_document: TextDocumentIdentifier { uri },
-                position: Position { line, character },
-            },
-            work_done_progress_params: WorkDoneProgressParams::default(),
-        };
-        self.send_request("textDocument/hover", params).await
-    }
-
-    /// Requests `textDocument/definition` at `(line, character)`.
-    pub async fn definition(
-        &self,
-        uri_str: &str,
-        line: u32,
-        character: u32,
-    ) -> Result<Option<GotoDefinitionResponse>, LspError> {
-        let uri = Self::parse_uri(uri_str)?;
-        let params = GotoDefinitionParams {
-            text_document_position_params: TextDocumentPositionParams {
-                text_document: TextDocumentIdentifier { uri },
-                position: Position { line, character },
-            },
-            work_done_progress_params: WorkDoneProgressParams::default(),
-            partial_result_params: Default::default(),
-        };
-        self.send_request("textDocument/definition", params).await
-    }
-
-    /// Returns cached diagnostics published by the server for `uri_str`.
-    pub fn diagnostics_for_uri(&self, uri_str: &str) -> Vec<Diagnostic> {
-        self.diagnostics
-            .read()
-            .get(uri_str)
-            .cloned()
-            .unwrap_or_default()
-    }
+    /// The peer violated the base protocol (framing, message shape).
+    #[error("protocol error: {0}")]
+    Protocol(String),
+    /// The server process could not be started.
+    #[error("failed to start `{program}`: {source}")]
+    Spawn {
+        /// Program that failed to start.
+        program: String,
+        /// OS error.
+        #[source]
+        source: std::io::Error,
+    },
+    /// A request did not complete in time (it was cancelled on the server).
+    #[error("request `{method}` timed out after {timeout:?}")]
+    Timeout {
+        /// Request method.
+        method: String,
+        /// Timeout that elapsed.
+        timeout: Duration,
+    },
+    /// The request was cancelled by the caller.
+    #[error("request cancelled")]
+    Cancelled,
+    /// Invalid `lsp.json` configuration.
+    #[error("invalid LSP configuration: {0}")]
+    Config(String),
+    /// The document was never opened with the manager.
+    #[error("document is not open: {0}")]
+    DocumentNotOpen(String),
+    /// The server for the document is not running (failed, exited or missing).
+    #[error("language server `{0}` is not running")]
+    ServerNotRunning(String),
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use lsp_types::{
-        CompletionItemKind, DiagnosticSeverity, HoverContents, Location, MarkupContent, MarkupKind,
-        Range,
+        CompletionItem, CompletionItemKind, CompletionResponse, Diagnostic, DiagnosticSeverity,
+        GotoDefinitionResponse, Hover, HoverContents, Location as LspLocation, MarkupContent,
+        MarkupKind, Position, PublishDiagnosticsParams, Range, Uri,
     };
+    use serde_json::{json, Value};
+    use std::str::FromStr;
+    use tokio::io::{AsyncWriteExt, BufReader, DuplexStream, ReadHalf, WriteHalf};
 
     #[tokio::test]
     async fn test_mock_transport_full_lsp_flow() {
@@ -706,7 +158,7 @@ mod tests {
                     Ok(serde_json::to_value(Some(hover)).unwrap())
                 }
                 "textDocument/definition" => {
-                    let loc = Location {
+                    let loc = LspLocation {
                         uri: Uri::from_str("file:///workspace/src/lib.rs").unwrap(),
                         range: Range {
                             start: Position {
@@ -795,10 +247,15 @@ mod tests {
             })
             .unwrap();
 
-        // Yield briefly for the background router task to process the notification
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-
-        let diags = client.diagnostics_for_uri(uri);
+        // Wait for the background router task to process the notification.
+        let mut diags = Vec::new();
+        for _ in 0..200 {
+            diags = client.diagnostics_for_uri(uri);
+            if !diags.is_empty() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
         assert_eq!(diags.len(), 1);
         assert_eq!(diags[0].message, "cannot find value `pr` in this scope");
         assert_eq!(recorded_notifs.read().len(), 2);
@@ -815,12 +272,7 @@ mod tests {
         tokio::spawn(async move {
             let mut reader = BufReader::new(server_read);
             if let Ok(Some(JsonRpcMessage::Request(req))) = read_lsp_frame(&mut reader).await {
-                let resp = JsonRpcMessage::Response(JsonRpcResponse {
-                    jsonrpc: "2.0".to_string(),
-                    id: req.id,
-                    result: Some(serde_json::json!(null)),
-                    error: None,
-                });
+                let resp = JsonRpcMessage::Response(JsonRpcResponse::success(req.id, Value::Null));
                 let bytes = encode_lsp_frame(&resp).unwrap();
                 let _ = server_write.write_all(&bytes).await;
                 let _ = server_write.flush().await;
@@ -847,12 +299,7 @@ mod tests {
                 if let Ok(JsonRpcMessage::Request(req)) =
                     serde_json::from_slice::<JsonRpcMessage>(&payload)
                 {
-                    let resp = JsonRpcMessage::Response(JsonRpcResponse {
-                        jsonrpc: "2.0".to_string(),
-                        id: req.id,
-                        result: Some(serde_json::json!([])),
-                        error: None,
-                    });
+                    let resp = JsonRpcMessage::Response(JsonRpcResponse::success(req.id, json!([])));
                     let frame = encode_ws_text_frame(&serde_json::to_vec(&resp).unwrap());
                     let _ = server_write.write_all(&frame).await;
                     let _ = server_write.flush().await;
@@ -865,5 +312,264 @@ mod tests {
             .await
             .expect("websocket completion should succeed");
         assert!(items.is_empty());
+    }
+
+    /// In-process fake server speaking the real `Content-Length` framing.
+    struct FakeServer {
+        reader: BufReader<ReadHalf<DuplexStream>>,
+        writer: WriteHalf<DuplexStream>,
+    }
+
+    impl FakeServer {
+        fn connect(options: ClientOptions) -> (LspClient, tokio::sync::mpsc::UnboundedReceiver<ClientEvent>, Self) {
+            let (client_side, server_side) = tokio::io::duplex(1 << 16);
+            let (cr, cw) = tokio::io::split(client_side);
+            let (sr, sw) = tokio::io::split(server_side);
+            let transport = StdioTransport::from_streams(cr, cw);
+            let (client, events) = LspClient::with_options(transport.into_channels(), options);
+            (
+                client,
+                events,
+                Self {
+                    reader: BufReader::new(sr),
+                    writer: sw,
+                },
+            )
+        }
+
+        async fn recv(&mut self) -> JsonRpcMessage {
+            tokio::time::timeout(std::time::Duration::from_secs(5), read_lsp_frame(&mut self.reader))
+                .await
+                .expect("fake server timed out waiting for a message")
+                .unwrap()
+                .expect("stream closed")
+        }
+
+        async fn send(&mut self, msg: JsonRpcMessage) {
+            let bytes = encode_lsp_frame(&msg).unwrap();
+            self.writer.write_all(&bytes).await.unwrap();
+            self.writer.flush().await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn server_to_client_requests_are_answered() {
+        let options = ClientOptions {
+            settings: json!({ "python": { "analysis": { "typeCheckingMode": "strict" } } }),
+            workspace_folders: vec![lsp_types::WorkspaceFolder {
+                uri: Uri::from_str("file:///proj").unwrap(),
+                name: "proj".into(),
+            }],
+            ..Default::default()
+        };
+        let (client, mut events, mut server) = FakeServer::connect(options);
+
+        let request = |id: &str, method: &str, params: Value| {
+            JsonRpcMessage::Request(JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: RequestId::from(id),
+                method: method.into(),
+                params: Some(params),
+            })
+        };
+
+        server
+            .send(request(
+                "c1",
+                "workspace/configuration",
+                json!({ "items": [{ "section": "python.analysis" }, { "section": "missing" }] }),
+            ))
+            .await;
+        server
+            .send(request("c2", "window/workDoneProgress/create", json!({ "token": "t" })))
+            .await;
+        server
+            .send(request(
+                "c3",
+                "client/registerCapability",
+                json!({ "registrations": [{ "id": "r1", "method": "workspace/didChangeWatchedFiles" }] }),
+            ))
+            .await;
+        server
+            .send(request("c4", "workspace/workspaceFolders", Value::Null))
+            .await;
+        server
+            .send(request(
+                "c5",
+                "window/showMessageRequest",
+                json!({ "type": 2, "message": "Pick one", "actions": [{ "title": "A" }] }),
+            ))
+            .await;
+        server
+            .send(request("c6", "custom/unknown", json!({})))
+            .await;
+
+        let mut answers = HashMap::new();
+        for _ in 0..6 {
+            match server.recv().await {
+                JsonRpcMessage::Response(resp) => {
+                    answers.insert(resp.id.clone().unwrap(), resp);
+                }
+                other => panic!("unexpected {other:?}"),
+            }
+        }
+        let get = |id: &str| answers.get(&RequestId::from(id)).unwrap().clone();
+        assert_eq!(
+            get("c1").result.unwrap(),
+            json!([{ "typeCheckingMode": "strict" }, null])
+        );
+        let c2 = get("c2");
+        assert!(c2.error.is_none());
+        assert_eq!(c2.result, Some(Value::Null));
+        assert_eq!(client.registrations().len(), 1);
+        assert_eq!(get("c4").result.unwrap()[0]["name"], "proj");
+        assert_eq!(get("c5").result, Some(Value::Null));
+        assert_eq!(
+            get("c6").error.unwrap().code,
+            error_codes::METHOD_NOT_FOUND
+        );
+
+        server
+            .send(request(
+                "c7",
+                "client/unregisterCapability",
+                json!({ "unregisterations": [{ "id": "r1", "method": "workspace/didChangeWatchedFiles" }] }),
+            ))
+            .await;
+        let _ = server.recv().await;
+        assert!(client.registrations().is_empty());
+
+        // Informational events were emitted for each request.
+        let mut seen = Vec::new();
+        while let Ok(ev) = events.try_recv() {
+            if let ClientEvent::ServerRequest { method, .. } = ev {
+                seen.push(method);
+            }
+        }
+        assert!(seen.contains(&"window/showMessageRequest".to_string()));
+    }
+
+    use std::collections::HashMap;
+
+    #[tokio::test]
+    async fn timeout_and_drop_send_cancel_request() {
+        let (client, _events, mut server) = FakeServer::connect(ClientOptions::default());
+
+        let err = client
+            .send_request_with_timeout::<_, Value>(
+                "textDocument/hover",
+                json!({}),
+                std::time::Duration::from_millis(50),
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(err, LspError::Timeout { .. }), "{err}");
+        let first = server.recv().await;
+        let JsonRpcMessage::Request(req) = first else {
+            panic!("expected request")
+        };
+        match server.recv().await {
+            JsonRpcMessage::Notification(n) => {
+                assert_eq!(n.method, "$/cancelRequest");
+                assert_eq!(n.params.unwrap()["id"], json!(req.id));
+            }
+            other => panic!("expected cancel, got {other:?}"),
+        }
+
+        // A late response for the cancelled id is ignored and does not disturb the next request.
+        server
+            .send(JsonRpcMessage::Response(JsonRpcResponse::success(
+                req.id.clone(),
+                json!("late"),
+            )))
+            .await;
+
+        let pending = client.start_request("textDocument/definition", json!({})).unwrap();
+        let JsonRpcMessage::Request(req2) = server.recv().await else {
+            panic!("expected request")
+        };
+        assert_eq!(pending.id(), &req2.id);
+        drop(pending);
+        match server.recv().await {
+            JsonRpcMessage::Notification(n) => assert_eq!(n.method, "$/cancelRequest"),
+            other => panic!("expected cancel, got {other:?}"),
+        }
+
+        // Out-of-order responses are correlated by id.
+        let a = client.start_request("a", json!({})).unwrap();
+        let b = client.start_request("b", json!({})).unwrap();
+        let JsonRpcMessage::Request(ra) = server.recv().await else { panic!() };
+        let JsonRpcMessage::Request(rb) = server.recv().await else { panic!() };
+        server
+            .send(JsonRpcMessage::Response(JsonRpcResponse::success(rb.id, json!("B"))))
+            .await;
+        server
+            .send(JsonRpcMessage::Response(JsonRpcResponse::failure(
+                ra.id,
+                error_codes::CONTENT_MODIFIED,
+                "content modified",
+            )))
+            .await;
+        assert_eq!(b.wait().await.unwrap(), json!("B"));
+        assert!(matches!(
+            a.wait().await,
+            Err(LspError::RpcError { code, .. }) if code == error_codes::CONTENT_MODIFIED
+        ));
+    }
+
+    #[tokio::test]
+    async fn closed_transport_fails_pending_requests_and_emits_closed() {
+        let (client, mut events, server) = FakeServer::connect(ClientOptions::default());
+        let pending = client.start_request("slow", json!({})).unwrap();
+        drop(server);
+        let err = pending.wait().await.unwrap_err();
+        assert!(matches!(err, LspError::TransportClosed), "{err}");
+        loop {
+            match tokio::time::timeout(std::time::Duration::from_secs(5), events.recv())
+                .await
+                .unwrap()
+            {
+                Some(ClientEvent::Closed) => break,
+                Some(_) => continue,
+                None => panic!("event channel closed without Closed event"),
+            }
+        }
+        assert!(client.is_closed());
+        assert!(matches!(
+            client.send_notification("x", json!({})),
+            Err(LspError::TransportClosed)
+        ));
+    }
+
+    #[tokio::test]
+    async fn shutdown_kills_unresponsive_process() {
+        // `sleep` never answers `shutdown`; the client must kill it after the timeout.
+        let transport = StdioTransport::spawn("sleep", &["30"]).unwrap();
+        let client = LspClient::new(transport.into_channels());
+        assert!(client.process_id().is_some());
+        let started = std::time::Instant::now();
+        let status = client
+            .shutdown(std::time::Duration::from_millis(300))
+            .await
+            .expect("exit status");
+        assert!(!status.success());
+        assert!(started.elapsed() < std::time::Duration::from_secs(10));
+    }
+
+    #[test]
+    fn client_capabilities_advertise_utf16_and_no_snippets() {
+        let caps = default_client_capabilities();
+        let value = serde_json::to_value(&caps).unwrap();
+        assert_eq!(value["general"]["positionEncodings"], json!(["utf-16"]));
+        assert_eq!(
+            value["textDocument"]["completion"]["completionItem"]["snippetSupport"],
+            json!(false)
+        );
+        assert_eq!(value["textDocument"]["definition"]["linkSupport"], json!(true));
+        assert_eq!(value["window"]["workDoneProgress"], json!(true));
+        assert_eq!(
+            lookup_section(&json!({"a": {"b": {"c": 1}}}), "a.b"),
+            json!({"c": 1})
+        );
     }
 }

@@ -1,7 +1,18 @@
 /target/
+*.DS_Store
+
+# Android (Gradle outputs, IDE files, and native libraries produced by scripts/build-rust-android.sh)
 platforms/android/.gradle/
+platforms/android/.kotlin/
+platforms/android/.idea/
 platforms/android/build/
 platforms/android/app/build/
+platforms/android/local.properties
+platforms/android/app/src/main/jniLibs/
+
+# iOS (SwiftPM outputs, XCFramework produced by scripts/build-xcframework.sh, XcodeGen output)
 platforms/ios/.build/
+platforms/ios/.swiftpm/
+platforms/ios/build/
 platforms/ios/Frameworks/
-*.DS_Store
+platforms/ios/App/IDELevity.xcodeproj/

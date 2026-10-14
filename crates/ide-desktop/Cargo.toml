@@ -13,8 +13,13 @@ path = "src/main.rs"
 
 [dependencies]
 ide-core = { path = "../ide-core" }
+ide-lsp = { path = "../ide-lsp" }
+ide-terminal = { path = "../ide-terminal" }
+ide-search = { path = "../ide-search" }
+ide-ai = { path = "../ide-ai" }
 iced = { version = "0.13", features = ["tokio", "canvas", "advanced"] }
 cosmic-text = "0.12"
 alacritty_terminal = "0.24"
 tokio = { version = "1", features = ["full"] }
 parking_lot = "0.12"
+unicode-width = "0.2"

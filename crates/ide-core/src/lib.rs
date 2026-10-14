@@ -14,7 +14,8 @@ pub use ide_agent::{
 };
 pub use ide_buffer::{BufferEdit, BufferError, Cursor, CursorDirection, SearchMatch, TextBuffer};
 pub use ide_git::{
-    DiffMarkerKind, FileChangeKind, GitError, GitFileStatus, GitRepository, LineDiffStatus,
+    BranchInfo, ChangeKind, CommitSummary, DiffMarkerKind, FileChangeKind, GitError,
+    GitFileStatus, GitRepository, LineDiffStatus, StatusEntry,
 };
 pub use ide_syntax::{HighlightSpan, SyntaxEngine, SyntaxError, SyntaxLanguage};
 
@@ -1001,6 +1002,11 @@ impl IdeWorkspace {
             .unwrap_or_default()
     }
 
+    /// Returns a handle to the active Git repository if the workspace is inside one.
+    pub fn git_repository(&self) -> Option<GitRepository> {
+        self.git_repo.read().clone()
+    }
+
     /// Returns the current Git branch name if the workspace is inside a Git repository.
     pub fn current_git_branch(&self) -> Option<String> {
         self.git_repo
@@ -1243,7 +1249,7 @@ impl IdeWorkspace {
     /// reloaded; dirty ones are reported as conflicts; deleted files are reported.
     pub fn poll_external_changes(&self) -> Vec<(u64, ExternalChange)> {
         let mut changes = Vec::new();
-        let ids: Vec<(u64, PathBuf, Option<(SystemTime, u64)>, bool)> = self
+        let ids: Vec<_> = self
             .documents
             .read()
             .iter()
